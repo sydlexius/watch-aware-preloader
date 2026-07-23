@@ -23,7 +23,8 @@ func VerifyResidency(cache pagecache.Cache, hostPath string, offset, length int6
 // ReportResidency checks each warmed range's page-cache residency, logs per-range
 // results, and returns the mean resident percent across ranges with a known result.
 // anyKnown is false when residency cannot be determined on this platform (no mincore).
-func ReportResidency(cache pagecache.Cache, warmed []preloader.WarmedRange, log *slog.Logger) (meanPct float64, anyKnown bool) {
+// measuredCount is the number of ranges for which residency was known and measured.
+func ReportResidency(cache pagecache.Cache, warmed []preloader.WarmedRange, log *slog.Logger) (meanPct float64, anyKnown bool, measuredCount int) {
 	var sum float64
 	var n int
 	for _, r := range warmed {
@@ -44,7 +45,7 @@ func ReportResidency(cache pagecache.Cache, warmed []preloader.WarmedRange, log 
 		n++
 	}
 	if n == 0 {
-		return 0, false
+		return 0, false, 0
 	}
-	return sum / float64(n), true
+	return sum / float64(n), true, n
 }

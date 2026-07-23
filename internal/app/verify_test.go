@@ -64,7 +64,7 @@ func TestReportResidency(t *testing.T) {
 			{Path: "/a", Offset: 0, Length: 100},
 			{Path: "/b", Offset: 0, Length: 100},
 		}
-		mean, anyKnown := ReportResidency(cache, warmed, log)
+		mean, anyKnown, _ := ReportResidency(cache, warmed, log)
 		if !anyKnown {
 			t.Fatal("expected anyKnown=true")
 		}
@@ -78,7 +78,7 @@ func TestReportResidency(t *testing.T) {
 		warmed := []preloader.WarmedRange{
 			{Path: "/a", Offset: 0, Length: 100},
 		}
-		_, anyKnown := ReportResidency(cache, warmed, log)
+		_, anyKnown, _ := ReportResidency(cache, warmed, log)
 		if anyKnown {
 			t.Error("expected anyKnown=false on platforms without mincore")
 		}
@@ -91,7 +91,7 @@ func TestReportResidencyLogsMethod(t *testing.T) {
 	cache := methoderCache{resident: 1 << 20, method: "timing"}
 	warmed := []preloader.WarmedRange{{Path: "/mnt/user/x.mkv", Offset: 0, Length: 1 << 20}}
 
-	mean, known := ReportResidency(cache, warmed, log)
+		mean, known, _ := ReportResidency(cache, warmed, log)
 	if !known || mean != 100 {
 		t.Fatalf("mean=%v known=%v, want 100 true", mean, known)
 	}
