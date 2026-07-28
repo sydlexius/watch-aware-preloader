@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/doxazo-net/watch-aware-preloader/internal/pagecache"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 )
 
@@ -153,52 +154,77 @@ func TestReportResidencyLogsMethod(t *testing.T) {
 // cmd/preloadd/main.go emits, including the zero-measured case from issue #94.
 func TestVerifyCompleteMessage(t *testing.T) {
 	tests := []struct {
-		name        string
-		warmedCount int
-		rep         ResidencyReport
-		want        string
+		name string
+		rep  ResidencyReport
+		want string
 	}{
 		{
-			name:        "nothing preloaded",
-			warmedCount: 0,
-			want:        "verify complete (no items preloaded this sweep - nothing to measure)",
+			name: "nothing preloaded",
+			rep:  ResidencyReport{},
+			want: "verify complete (no items preloaded this sweep - nothing to measure)",
 		},
 		{
-			name:        "measured",
-			warmedCount: 2,
-			rep:         ResidencyReport{MeanPct: 80, Measured: 2},
-			want:        "verify complete",
+			name: "measured",
+			rep:  ResidencyReport{MeanPct: 80, Measured: 2},
+			want: "verify complete",
 		},
 		{
-			name:        "all probes failed",
-			warmedCount: 2,
-			rep:         ResidencyReport{Failed: 2},
-			want:        "verify complete (residency probes failed - see the residency check failed warnings above)",
+			name: "all probes failed",
+			rep:  ResidencyReport{Failed: 2},
+			want: "verify complete (residency probes failed - see the residency check failed warnings above)",
 		},
 		{
-			name:        "unsupported platform",
-			warmedCount: 2,
-			rep:         ResidencyReport{Unsupported: 2},
-			want:        "verify complete (residency unavailable on this platform - mincore is Linux-only)",
+			name: "unsupported platform",
+			rep:  ResidencyReport{Unsupported: 2},
+			want: "verify complete (residency unavailable on this platform - mincore is Linux-only)",
 		},
 		{
-			name:        "mixed failure and unsupported",
-			warmedCount: 2,
-			rep:         ResidencyReport{Failed: 1, Unsupported: 1},
-			want:        "verify complete (residency partly unavailable on this platform and partly failing - mincore is Linux-only)",
-		},
-		{
-			name:        "measured wins over a partial failure",
-			warmedCount: 3,
-			rep:         ResidencyReport{MeanPct: 90, Measured: 2, Failed: 1},
-			want:        "verify complete",
+			name: "measured wins over a partial failure",
+			rep:  ResidencyReport{MeanPct: 90, Measured: 2, Failed: 1},
+			want: "verify complete",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := VerifyCompleteMessage(tt.warmedCount, tt.rep); got != tt.want {
+			if got := VerifyCompleteMessage(tt.rep); got != tt.want {
 				t.Errorf("VerifyCompleteMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResidencyReportProbed(t *testing.T) {
+	rep := ResidencyReport{Measured: 2, Failed: 3, Unsupported: 4}
+	if got := rep.Probed(); got != 9 {
+		t.Errorf("Probed() = %d, want 9", got)
+	}
+	if got := (ResidencyReport{}).Probed(); got != 0 {
+		t.Errorf("Probed() on zero value = %d, want 0", got)
+	}
+}
+
+// Probed() must equal the number of warmed ranges handed to ReportResidency:
+// the completion message keys off it, so a range that increments no counter
+// would silently read as an empty sweep.
+func TestReportResidencyProbedMatchesWarmedLen(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	warmed := []preloader.WarmedRange{
+		{Path: "/a", Offset: 0, Length: 100},
+		{Path: "/b", Offset: 0, Length: 100},
+		{Path: "/c", Offset: 0, Length: 100},
+	}
+	for _, tc := range []struct {
+		name  string
+		cache pagecache.Cache
+	}{
+		{"measured", residentCache{resident: 80, known: true}},
+		{"unsupported", residentCache{known: false}},
+		{"failed", erroringCache{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ReportResidency(tc.cache, warmed, log).Probed(); got != len(warmed) {
+				t.Errorf("Probed() = %d, want %d", got, len(warmed))
 			}
 		})
 	}
@@ -212,7 +238,7 @@ func TestVerifyCompleteMessageDoesNotBlamePlatformForProbeErrors(t *testing.T) {
 	warmed := []preloader.WarmedRange{{Path: "/a", Offset: 0, Length: 100}}
 
 	rep := ReportResidency(erroringCache{}, warmed, log)
-	got := VerifyCompleteMessage(len(warmed), rep)
+	got := VerifyCompleteMessage(rep)
 
 	if strings.Contains(got, "mincore is Linux-only") {
 		t.Errorf("probe failure mislabeled as an unsupported platform: %q", got)

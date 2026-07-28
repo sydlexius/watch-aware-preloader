@@ -122,7 +122,7 @@ func main() {
 		if rep.Failed > 0 {
 			attrs = append(attrs, "probe_failures", rep.Failed)
 		}
-		log.Info(app.VerifyCompleteMessage(len(stats.Warmed), rep), attrs...)
+		log.Info(app.VerifyCompleteMessage(rep), attrs...)
 
 	case "once":
 		stats, sweepErr := app.SweepWithUsers(context.Background(), client, pre, cfg, d.Budget(), "once", log)

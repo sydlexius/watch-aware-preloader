@@ -20,13 +20,15 @@ func VerifyResidency(cache pagecache.Cache, hostPath string, offset, length int6
 	return float64(resident) / float64(length) * 100, true, nil
 }
 
-// ResidencyReport summarizes a verify sweep's residency probing. The three
-// counts are disjoint and together account for every warmed range, so callers
-// can tell "nothing to measure", "probing failed", and "probing unsupported"
-// apart instead of collapsing them into one negative signal.
+// ResidencyReport summarizes a verify sweep's residency probing. Every warmed
+// range increments exactly one counter, so Measured+Failed+Unsupported is the
+// number of ranges probed and callers can tell "nothing to measure", "probing
+// failed", and "probing unsupported" apart instead of collapsing them into one
+// negative signal.
 type ResidencyReport struct {
 	// MeanPct is the mean resident percent across measured ranges. It is
-	// meaningful only when Measured > 0.
+	// meaningful only when Measured > 0. A zero-length range counts as
+	// measured at 0%, so it pulls the mean down.
 	MeanPct float64
 	// Measured counts ranges whose residency was determined.
 	Measured int
@@ -34,9 +36,14 @@ type ResidencyReport struct {
 	// bad path). These say nothing about platform support.
 	Failed int
 	// Unsupported counts ranges the platform could not probe at all
-	// (no mincore).
+	// (no mincore). In practice a cache reports this for every range or
+	// none, since it is a property of the platform rather than the file.
 	Unsupported int
 }
+
+// Probed reports how many warmed ranges were classified, i.e. the length of the
+// warmed slice ReportResidency was given.
+func (r ResidencyReport) Probed() int { return r.Measured + r.Failed + r.Unsupported }
 
 // ReportResidency checks each warmed range's page-cache residency, logs
 // per-range results, and returns a report classifying every range.
@@ -69,19 +76,17 @@ func ReportResidency(cache pagecache.Cache, warmed []preloader.WarmedRange, log 
 }
 
 // VerifyCompleteMessage returns the completion message for a verify sweep that
-// warmed warmedCount ranges and produced rep. Each outcome gets its own
-// message so an operator is never told the platform is unsupported when the
-// real cause was an empty sweep or a failing probe.
-func VerifyCompleteMessage(warmedCount int, rep ResidencyReport) string {
+// produced rep. Each outcome gets its own message so an operator is never told
+// the platform is unsupported when the real cause was an empty sweep or a
+// failing probe (issue #94).
+func VerifyCompleteMessage(rep ResidencyReport) string {
 	switch {
-	case warmedCount == 0:
+	case rep.Probed() == 0:
 		return "verify complete (no items preloaded this sweep - nothing to measure)"
 	case rep.Measured > 0:
 		return "verify complete"
-	case rep.Failed > 0 && rep.Unsupported == 0:
-		return "verify complete (residency probes failed - see the residency check failed warnings above)"
 	case rep.Failed > 0:
-		return "verify complete (residency partly unavailable on this platform and partly failing - mincore is Linux-only)"
+		return "verify complete (residency probes failed - see the residency check failed warnings above)"
 	default:
 		return "verify complete (residency unavailable on this platform - mincore is Linux-only)"
 	}
