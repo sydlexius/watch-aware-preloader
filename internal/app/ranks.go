@@ -3,6 +3,7 @@ package app
 import (
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
@@ -17,8 +18,15 @@ const (
 	refUnknown   userRef = iota // matched no user
 	refExactID                  // matched a user ID
 	refName                     // matched exactly one display name
-	refAmbiguous                // matched more than one display name
+	refCfgKey                   // matched exactly one user's .cfg-key spelling
+	refAmbiguous                // matched more than one user
 )
+
+// cfgKeyNormalize maps a string into the character set an Unraid .cfg key
+// allows. '-' is not legal in a .cfg key, so the settings page applies exactly
+// this transform to a user id when it names the TIER_ORDER_<id> field, and
+// rc.preloadd cannot invert it to recover the dashed id.
+func cfgKeyNormalize(s string) string { return strings.ReplaceAll(s, "-", "_") }
 
 // resolveUserKey maps a configured user reference (an ID or a display name) to a
 // user ID.
@@ -31,8 +39,24 @@ const (
 // nothing. Returning the first match would bind the operator's intent to the
 // server's arbitrary list order, silently warming one user's media under
 // another's name; refusing makes the operator disambiguate with an ID.
+//
+// Failing both, the key is tried as a .cfg-key SPELLING of an id or name (see
+// cfgKeyNormalize). rc.preloadd can only recover the original dashed id for a
+// user named in the enabled list, and that list is empty in the "all users"
+// default, so an override key may legitimately arrive underscored. This tier
+// never outranks an exact ID.
+//
+// A unique display-name match does NOT short-circuit the .cfg-key tier, because
+// the two can point at DIFFERENT users: with users {id-a, name "bob_smith"} and
+// {id "bob-smith", name "Bob"}, the key "bob_smith" is one user's exact name and
+// the other's .cfg-key spelling. Both readings are plausible (a hand-written
+// config means the name; a page-written key means the id), so the conflict is
+// refused rather than silently resolved in favor of whichever tier is checked
+// first. Returning early on the name match is what let a bystander collect
+// another user's override with no warning at all.
 func resolveUserKey(users []emby.User, key string) (string, userRef) {
-	var named []string
+	var named, keyed []string
+	normKey := cfgKeyNormalize(key)
 	for _, u := range users {
 		if u.ID == key {
 			return u.ID, refExactID
@@ -40,12 +64,29 @@ func resolveUserKey(users []emby.User, key string) (string, userRef) {
 		if u.Name == key {
 			named = append(named, u.ID)
 		}
+		if cfgKeyNormalize(u.ID) == normKey || cfgKeyNormalize(u.Name) == normKey {
+			keyed = append(keyed, u.ID)
+		}
 	}
-	switch len(named) {
+	if len(named) > 1 {
+		return "", refAmbiguous
+	}
+	if len(named) == 1 {
+		// Honor the exact name only when no OTHER user answers to the same
+		// .cfg-key spelling. A keyed entry for this same user is the ordinary
+		// case (a name normalizes onto itself) and is not a conflict.
+		for _, id := range keyed {
+			if id != named[0] {
+				return "", refAmbiguous
+			}
+		}
+		return named[0], refName
+	}
+	switch len(keyed) {
 	case 0:
 		return "", refUnknown
 	case 1:
-		return named[0], refName
+		return keyed[0], refCfgKey
 	default:
 		return "", refAmbiguous
 	}
@@ -76,8 +117,9 @@ func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) score
 	// Two DIFFERENT override keys can name the SAME user (say "Alice" and her ID),
 	// and cfg.Tiers.Override is a map, so applying them in iteration order would
 	// let Go's randomized ordering pick the winner - the same config yielding a
-	// different warm set per run. Resolve in sorted key order, then apply
-	// name-resolved entries before ID-resolved ones so the exact ID always wins.
+	// different warm set per run. Resolve in sorted key order, then apply the
+	// weakest match tier first so a stronger one always wins: .cfg-key spelling,
+	// then display name, then the exact ID.
 	keys := make([]string, 0, len(cfg.Tiers.Override))
 	for key := range cfg.Tiers.Override {
 		keys = append(keys, key)
@@ -88,7 +130,7 @@ func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) score
 		id    string
 		order map[core.Tier]int
 	}
-	var byName, byID []resolvedOverride
+	var byCfgKey, byName, byID []resolvedOverride
 	for _, key := range keys {
 		id, ref := resolveUserKey(users, key)
 		switch ref {
@@ -96,6 +138,8 @@ func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) score
 			byID = append(byID, resolvedOverride{id, tierPositions(cfg.Tiers.Override[key])})
 		case refName:
 			byName = append(byName, resolvedOverride{id, tierPositions(cfg.Tiers.Override[key])})
+		case refCfgKey:
+			byCfgKey = append(byCfgKey, resolvedOverride{id, tierPositions(cfg.Tiers.Override[key])})
 		case refAmbiguous:
 			log.Warn("ignoring tier override for ambiguous user name", "user", key)
 		case refUnknown:
@@ -103,6 +147,9 @@ func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) score
 		}
 	}
 	overrides := make(map[string]map[core.Tier]int, len(cfg.Tiers.Override))
+	for _, r := range byCfgKey {
+		overrides[r.id] = r.order
+	}
 	for _, r := range byName {
 		overrides[r.id] = r.order
 	}
@@ -148,7 +195,7 @@ func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) score
 	for _, key := range cfg.Users.Enabled {
 		id, ref := resolveUserKey(users, key)
 		switch ref {
-		case refExactID, refName:
+		case refExactID, refName, refCfgKey:
 			assign(id, len(opts.UserRank))
 		case refAmbiguous:
 			log.Warn("ignoring enabled user whose display name matches several users", "user", key)
