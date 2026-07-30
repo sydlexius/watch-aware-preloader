@@ -260,3 +260,150 @@ func TestResolveRanksOverrideAmbiguousNameIgnored(t *testing.T) {
 		t.Errorf("expected an ambiguity warning, got: %s", buf.String())
 	}
 }
+
+// An override key may arrive in its .cfg-key spelling (dashes as underscores),
+// because rc.preloadd can only recover the dashed id for a user named in the
+// enabled list - and that list is empty in the "all users" default, which is the
+// shipped default.cfg value. Before this bound, every override saved in that
+// state was silently dropped.
+func TestResolveRanksOverrideBindsByCfgKeySpelling(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{
+		"id_a": {core.TierRecentlyAdded}, // id-a in .cfg-key spelling
+	}
+
+	got := ResolveRanks(cfg, testUsers, discardLog())
+
+	want := map[core.Tier]int{core.TierRecentlyAdded: 0}
+	if !reflect.DeepEqual(got.TierRank["id-a"], want) {
+		t.Fatalf("TierRank[id-a] = %v, want %v", got.TierRank["id-a"], want)
+	}
+	// Everyone else still inherits the global order.
+	if len(got.TierRank["id-b"]) != len(config.DefaultTierOrder()) {
+		t.Fatalf("TierRank[id-b] = %v, want the global order", got.TierRank["id-b"])
+	}
+}
+
+// The .cfg-key tier is a LAST resort: an exact ID must outrank it, or a config
+// carrying both spellings would resolve by map iteration order.
+func TestResolveRanksOverrideExactIDBeatsCfgKeySpelling(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{
+		"id-a": {core.TierResume},        // exact id
+		"id_a": {core.TierRecentlyAdded}, // .cfg-key spelling of the same user
+	}
+
+	for i := 0; i < 20; i++ { // map order is randomized; the winner must not be
+		got := ResolveRanks(cfg, testUsers, discardLog())
+		want := map[core.Tier]int{core.TierResume: 0}
+		if !reflect.DeepEqual(got.TierRank["id-a"], want) {
+			t.Fatalf("TierRank[id-a] = %v, want the exact-id order %v", got.TierRank["id-a"], want)
+		}
+	}
+}
+
+// Two ids that differ only by '-' vs '_' collide under the .cfg-key transform.
+// Each is still its own EXACT id, so exact-match precedence must bind each key to
+// its own user with no bleed in either direction.
+func TestResolveRanksCfgKeyCollisionBindsExactIDsOnly(t *testing.T) {
+	users := []emby.User{{ID: "x-y", Name: "Xavier"}, {ID: "x_y", Name: "Yvonne"}}
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{"x-y": {core.TierResume}}
+
+	var buf bytes.Buffer
+	got := ResolveRanks(cfg, users, captureLog(&buf))
+
+	// "x-y" is an EXACT id, so it binds; "x_y" must NOT inherit it.
+	if !reflect.DeepEqual(got.TierRank["x-y"], map[core.Tier]int{core.TierResume: 0}) {
+		t.Fatalf("TierRank[x-y] = %v, want the exact-id override", got.TierRank["x-y"])
+	}
+	if len(got.TierRank["x_y"]) != len(config.DefaultTierOrder()) {
+		t.Fatalf("TierRank[x_y] = %v, want the global order (no bleed)", got.TierRank["x_y"])
+	}
+
+	// Now the ambiguous direction: only the .cfg-key spelling is configured.
+	cfg.Tiers.Override = map[string]config.TierOrder{"x_y": {core.TierResume}}
+	buf.Reset()
+	got = ResolveRanks(cfg, users, captureLog(&buf))
+	// "x_y" is Yvonne's EXACT id, so it must bind to her and not to Xavier.
+	if !reflect.DeepEqual(got.TierRank["x_y"], map[core.Tier]int{core.TierResume: 0}) {
+		t.Fatalf("TierRank[x_y] = %v, want the exact-id override", got.TierRank["x_y"])
+	}
+	if len(got.TierRank["x-y"]) != len(config.DefaultTierOrder()) {
+		t.Fatalf("TierRank[x-y] = %v, want the global order (no bleed)", got.TierRank["x-y"])
+	}
+}
+
+// A key that matches nothing exactly but normalizes onto TWO different users is
+// genuinely ambiguous. Binding it to either would warm one household member's
+// media under another's override, so it is refused and warned - the same posture
+// as an ambiguous display name.
+func TestResolveRanksCfgKeyAmbiguityRefused(t *testing.T) {
+	// "a_b" is neither user's exact id nor exact name, yet normalizes onto both:
+	// via id "a-b" for one and via display name "a-b" for the other.
+	users := []emby.User{
+		{ID: "a-b", Name: "Ann"},
+		{ID: "id-z", Name: "a-b"},
+	}
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{"a_b": {core.TierResume}}
+
+	var buf bytes.Buffer
+	got := ResolveRanks(cfg, users, captureLog(&buf))
+
+	for _, id := range []string{"a-b", "id-z"} {
+		if len(got.TierRank[id]) != len(config.DefaultTierOrder()) {
+			t.Fatalf("TierRank[%s] = %v, want the global order (ambiguous override refused)", id, got.TierRank[id])
+		}
+	}
+	if !strings.Contains(buf.String(), "ambiguous") {
+		t.Fatalf("expected an ambiguity warning, got: %s", buf.String())
+	}
+}
+
+// A key can be one user's EXACT display name and ANOTHER user's .cfg-key
+// spelling at the same time. Both readings are plausible, so the conflict must be
+// refused: resolving it by whichever tier is checked first handed a bystander
+// another user's override silently. This is the axis a mutation that reordered
+// the two tiers slipped through, so it is pinned explicitly.
+func TestResolveRanksNameVsCfgKeyConflictRefused(t *testing.T) {
+	users := []emby.User{
+		{ID: "id-a", Name: "bob_smith"}, // exact-name match for the key
+		{ID: "bob-smith", Name: "Bob"},  // .cfg-key-spelling match for the key
+	}
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{"bob_smith": {core.TierResume}}
+
+	var buf bytes.Buffer
+	got := ResolveRanks(cfg, users, captureLog(&buf))
+
+	for _, id := range []string{"id-a", "bob-smith"} {
+		if len(got.TierRank[id]) != len(config.DefaultTierOrder()) {
+			t.Fatalf("TierRank[%s] = %v, want the global order (conflict refused)", id, got.TierRank[id])
+		}
+	}
+	if !strings.Contains(buf.String(), "ambiguous") {
+		t.Fatalf("expected an ambiguity warning, got: %s", buf.String())
+	}
+}
+
+// The ordinary unique-name match must still resolve: a name normalizes onto
+// itself, so its own keyed entry is not a conflict. Without this the guard above
+// would refuse every name-keyed override.
+func TestResolveRanksUniqueNameStillResolves(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Tiers.Order = config.DefaultTierOrder()
+	cfg.Tiers.Override = map[string]config.TierOrder{"Alice": {core.TierNextUp}}
+
+	got := ResolveRanks(cfg, testUsers, discardLog())
+
+	want := map[core.Tier]int{core.TierNextUp: 0}
+	if !reflect.DeepEqual(got.TierRank["id-a"], want) {
+		t.Fatalf("TierRank[id-a] = %v, want %v", got.TierRank["id-a"], want)
+	}
+}
