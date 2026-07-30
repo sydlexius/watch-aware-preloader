@@ -22,6 +22,16 @@ config.toml
 .idea/
 .vscode/
 
+# Agent-local working state (per-machine; never shared)
+/.claude/settings.local.json
+/.claude/worktrees/
+/.claude/memory-*.json
+/.claude/memory-*.json.bak-*
+
+# Browser-automation artifacts from live UI verification (#87)
+/.playwright-mcp/
+/*.png
+
 # SDD scratch
 .superpowers/
 /preloadd
