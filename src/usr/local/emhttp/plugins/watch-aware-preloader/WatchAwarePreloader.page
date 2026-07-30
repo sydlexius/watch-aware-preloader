@@ -46,18 +46,164 @@ $wapCurLibs    = implode(',', $wapSelLibs);
 // island below opens directly with the connect-gate check).
 $wapMaps       = wap_picker_pathmaps($wapPickers);
 $wapRules      = (\is_array($wapMaps['rules'] ?? null)) ? $wapMaps['rules'] : [];
-// Signal tiers for the dial rows: [cfg-prefix, label]. Default enabled (checked)
-// and max 0 when the cfg key is absent, preserving pre-dials behavior.
-$wapTiers = [
-    ['RESUME', 'Resume points'],
-    ['NEXTUP', 'Next-up episodes'],
-    ['RECENT', 'Recently added'],
+// Signal tiers keyed by the ENGINE's tier token (what lands in a TIER_ORDER csv
+// and what rc.preloadd's tier_csv_filter accepts): token => [cfg-prefix, label].
+// The token is the wire format; the cfg-prefix only names the legacy dial keys.
+$wapAllTiers = [
+    'resume' => ['RESUME', 'Resume points'],
+    'nextup' => ['NEXTUP', 'Next-up episodes'],
+    'recent' => ['RECENT', 'Recently added'],
 ];
+
+// Reuse presave's normalizer so the page and the save path cannot drift on which
+// tier tokens are legal: one vocabulary, one implementation. Pure transforms, no
+// I/O, so including it here is free.
+require_once "{$docroot}/plugins/watch-aware-preloader/include/settings.php";
+
+/**
+ * Split a normalized tier-order csv into a list of tokens.
+ *
+ * @return list<string>
+ */
+$wapOrderList = static function (mixed $csv): array {
+    $out = wap_cfg_tier_order($csv);
+
+    return $out === '' ? [] : explode(',', $out);
+};
+
+/**
+ * Rows to render for an order list: the saved order first, then every remaining
+ * tier appended UNTICKED. A tier disabled by omission stays visible and
+ * re-enableable rather than vanishing from the UI with no way back.
+ *
+ * @param list<string> $order
+ * @return list<string>
+ */
+$wapOrderRows = static function (array $order) use ($wapAllTiers): array {
+    $rows = $order;
+    foreach (array_keys($wapAllTiers) as $t) {
+        if (!\in_array($t, $rows, true)) {
+            $rows[] = $t;
+        }
+    }
+
+    return $rows;
+};
+
+// The GLOBAL order. An ABSENT TIER_ORDER key means a pre-feature .cfg: derive the
+// order from the legacy *_ENABLED flags, exactly as rc.preloadd's
+// legacy_order_from_flags does, so the page and the engine agree. An EMPTY (but
+// present) TIER_ORDER is an explicit "warm nothing" and must stay empty.
+if (\array_key_exists('TIER_ORDER', $wapCfg)) {
+    $wapOrder = $wapOrderList($wapCfg['TIER_ORDER']);
+} else {
+    $wapOrder = [];
+    foreach ($wapAllTiers as $wapTok => [$wapPfx]) {
+        if (\in_array(strtolower((string) ($wapCfg["TIER_{$wapPfx}_ENABLED"] ?? '1')), ['1', 'true', 'yes', 'on'], true)) {
+            $wapOrder[] = $wapTok;
+        }
+    }
+}
+$wapTierRows = $wapOrderRows($wapOrder);
+
+/**
+ * The .cfg key suffix for a user id, or null when the id cannot form one.
+ * Unraid .cfg keys cannot hold '-' but Emby ids are dashed GUIDs, so the page
+ * posts TIER_ORDER_<id with '-' as '_'>. rc.preloadd discovers overrides from
+ * these keys and emits the ORIGINAL dashed id as the TOML key when it can recover
+ * it from the enabled-users csv, otherwise the underscored suffix as-is - the
+ * engine binds either form (app.resolveUserKey's refCfgKey tier). An id that is
+ * not [A-Za-z0-9_] after the transform can never form a .cfg key at all, so
+ * return null and the page renders no override control for it rather than a dead
+ * one. The regex is kept genuinely equivalent to cfg_key_safe's
+ * byte-based [A-Za-z0-9_] check: the 'D' modifier is required, or PHP's '$'
+ * matches before a trailing newline and accepts an id (e.g. "abc\n") that
+ * cfg_key_safe rejects, rendering a dead override control.
+ */
+$wapCfgKeyId = static function (string $id): ?string {
+    $key = strtr($id, '-', '_');
+
+    return preg_match('/^[A-Za-z0-9_]+$/D', $key) === 1 ? $key : null;
+};
+
+/**
+ * Count how many of the server's users map onto each .cfg key suffix.
+ *
+ * strtr('-','_') is NOT injective, so ids "a-b" and "a_b" both produce the field
+ * name TIER_ORDER_a_b. Two rows would then render the SAME name: PHP keeps the
+ * last posted value, so one user's override is destroyed on every save, and
+ * querySelector binds both toggles to the first panel. rc.preloadd and
+ * resolveUserKey both REFUSE a normalized collision rather than guess; the UI must
+ * not be the one layer that silently clobbers. Any suffix claimed by more than one
+ * user gets no override control at all - the same treatment as an id that cannot
+ * form a key.
+ *
+ * @param list<array{id?:string,name?:string}> $users
+ * @return array<string,int>
+ */
+$wapKeyIdCounts = static function (array $users) use ($wapCfgKeyId): array {
+    $counts = [];
+    foreach ($users as $u) {
+        $id = (string) ($u['id'] ?? '');
+        if ($id === '') {
+            continue;
+        }
+        $k = $wapCfgKeyId($id);
+        if ($k !== null) {
+            $counts[$k] = ($counts[$k] ?? 0) + 1;
+        }
+    }
+
+    return $counts;
+};
+
+// Saved per-user overrides, re-posted as hidden scalars in the connect-gate /
+// empty states.
+//
+// NOT for the reason the obvious one: /update.php MERGES rather than rewrites (it
+// seeds its key map from the existing .cfg and overlays POST), so a key nobody
+// posts SURVIVES and these overrides would persist regardless. The re-post is
+// belt-and-braces that keeps the posted state a faithful picture of the saved
+// state, and it costs nothing. Contrast $wapCurUsers above, whose re-post IS
+// load-bearing for a different reason: the presave materializes USERS
+// unconditionally, so an unposted USERS becomes '' rather than surviving.
+// The 'TIER_ORDER_' prefix cannot catch the global 'TIER_ORDER' (no trailing
+// underscore).
+$wapSavedOverrides = [];
+foreach ($wapCfg as $wapK => $wapV) {
+    if (\is_string($wapK) && str_starts_with($wapK, 'TIER_ORDER_') && \is_scalar($wapV)) {
+        $wapSavedOverrides[$wapK] = (string) $wapV;
+    }
+}
 ?>
 
 <table class="tablesorter shift ups">
 <thead><tr><th>Watch-Aware Preloader - settings</th></tr></thead>
 </table>
+
+<?php if ($wapEstimate !== null) {
+    // Inert JSON data island. JSON_HEX_TAG escapes < and > to < / > so a
+    // "</script>" in any value cannot break out of the <script> element (this is
+    // the breakout guard; do not drop it). JSON_UNESCAPED_SLASHES keeps paths
+    // readable. Rows are already anonymized {u,t,l,b,r} - no id/title.
+    $wapEstJson = json_encode($wapEstimate, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
+    ?>
+<div id="wap-meter" class="wap-meter" data-state="ok">
+    <div class="wap-meter-label">Projected warm set
+        <?php if (!empty($wapEstimate['meta']['ceiling_truncated'])) { ?>
+        <span class="wap-meter-note">(estimate capped at <?= (int) ($wapEstimate['ceiling_per_user_tier'] ?? 0) ?>/tier)</span>
+        <?php } ?>
+    </div>
+    <div class="wap-bar"><div class="wap-bar-fill"></div></div>
+    <div class="wap-meter-text"></div>
+    <div class="wap-drop" style="display:none"></div>
+    <div class="wap-stale" style="display:none"></div>
+</div>
+<script type="application/json" id="wap-estimate"><?= $wapEstJson ?></script>
+<script src="/plugins/watch-aware-preloader/js/meter.js"></script>
+<?php } else { ?>
+<blockquote class="inline_help">Click <strong>Estimate budget</strong> to project your current selection against the cache budget.</blockquote>
+<?php } ?>
 
 <?php
 /*
@@ -98,24 +244,142 @@ $wapTiers = [
     <?php if (!$wapConnected) { ?>
         <em>Connect to a server to choose users: save the Server URL and API key above, then click <strong>Test connection</strong>.</em>
         <input type="hidden" name="USERS" value="<?= htmlspecialchars($wapCurUsers) ?>">
+        <?php foreach ($wapSavedOverrides as $wapK => $wapV) { ?>
+        <input type="hidden" name="<?= htmlspecialchars($wapK) ?>" value="<?= htmlspecialchars($wapV) ?>">
+        <?php } ?>
     <?php } elseif (($wapUsers = wap_picker_users($wapPickers)) === []) { ?>
         <em>The server returned no users.</em>
         <input type="hidden" name="USERS" value="<?= htmlspecialchars($wapCurUsers) ?>">
+        <?php foreach ($wapSavedOverrides as $wapK => $wapV) { ?>
+        <input type="hidden" name="<?= htmlspecialchars($wapK) ?>" value="<?= htmlspecialchars($wapV) ?>">
+        <?php } ?>
     <?php } else {
+        // Rank order = DOM order. USERS[] checkboxes post in DOM order and the
+        // engine reads that order as the rank, so rendering the enrolled users in
+        // their saved csv order (unenrolled appended after) is the whole
+        // mechanism - there is no separate rank key to persist.
+        $wapEnrolled = [];
+        $wapRest     = [];
         foreach ($wapUsers as $u) {
             $id = (string) ($u['id'] ?? '');
             if ($id === '') {
                 continue; // an entry with no id cannot be persisted (empties are dropped)
             }
-            $nm = (string) ($u['name'] ?? $id);
-            $checked = (\in_array($id, $wapSelUsers, true) || \in_array($nm, $wapSelUsers, true)) ? ' checked' : '';
+            $nm  = (string) ($u['name'] ?? $id);
+            // The saved csv holds ids, or display names for a legacy selection.
+            $pos = array_search($id, $wapSelUsers, true);
+            if ($pos === false) {
+                $pos = array_search($nm, $wapSelUsers, true);
+            }
+            if ($pos === false) {
+                $wapRest[] = $u;
+            } else {
+                $wapEnrolled[$pos] = $u;
+            }
+        }
+        ksort($wapEnrolled);
+        $wapRanked = array_merge(array_values($wapEnrolled), $wapRest);
+        // Suffix -> how many users claim it, so a non-injective collision can be
+        // detected before any override control is rendered.
+        $wapKeyCounts = $wapKeyIdCounts($wapUsers);
+        $wapUn        = 0;
+        // Rank counter for the badges. Only enrolled users take a number, so it
+        // is incremented per checked row, not per row.
+        $wapRankNo = 0;
+        ?>
+        <div data-wap-order="" class="wap-order">
+        <?php foreach ($wapRanked as $u) {
+            $id      = (string) ($u['id'] ?? '');
+            $nm      = (string) ($u['name'] ?? $id);
+            $checked = (\in_array($id, $wapSelUsers, true) || \in_array($nm, $wapSelUsers, true));
+            $wapUid  = 'wap_user_' . (++$wapUn);
+            // No usable .cfg key for this id means rc.preloadd could never read an
+            // override for it, so no override control is offered rather than a
+            // dead one that silently does nothing. A suffix CLAIMED BY MORE THAN
+            // ONE user is treated the same way: rendering both would emit two
+            // inputs with one field name, and the save would keep only the last.
+            $wapKeyId = $wapCfgKeyId($id);
+            if ($wapKeyId !== null && ($wapKeyCounts[$wapKeyId] ?? 0) > 1) {
+                $wapKeyId = null;
+            }
+            $wapOvNm  = $wapKeyId === null ? null : "TIER_ORDER_{$wapKeyId}";
+            // Absence of the key IS inheritance; an empty value is a real, distinct
+            // choice ("warm nothing"), so test presence, never truthiness.
+            $wapHasOv = $wapOvNm !== null && \array_key_exists($wapOvNm, $wapCfg);
+            // With no override saved, seed the panel from the global order so
+            // ticking the box starts from what the user follows today.
+            $wapUOrder = $wapHasOv ? $wapOrderList($wapCfg[$wapOvNm]) : $wapOrder;
             ?>
-        <label style="display:block"><input type="checkbox" name="USERS[]" value="<?= htmlspecialchars($id) ?>"<?= $checked ?>> <?= htmlspecialchars($nm) ?></label>
-    <?php }
-        } ?>
+            <div data-wap-user="<?= htmlspecialchars($id) ?>" class="wap-user-row<?= $checked ? '' : ' wap-off' ?>">
+                <div class="wap-user-head">
+                    <?php
+                    // Rank badge. Server-rendered so it is correct without JS;
+                    // order.js renumbers it on a move or an enrollment toggle.
+                    // Only enrolled users carry a number - rank is meaningless
+                    // for someone not in the warm set.
+            ?>
+                    <span class="wap-rank" aria-hidden="true"><?= $checked ? (int) ++$wapRankNo : '' ?></span>
+                    <input type="checkbox" id="<?= $wapUid ?>" name="USERS[]" value="<?= htmlspecialchars($id) ?>"<?= $checked ? ' checked' : '' ?>>
+                    <label for="<?= $wapUid ?>"><?= htmlspecialchars($nm) ?></label>
+                    <span class="wap-user-gap"></span>
+                    <button type="button" data-wap-move="up" aria-label="Move <?= htmlspecialchars($nm) ?> up">&uarr;</button>
+                    <button type="button" data-wap-move="down" aria-label="Move <?= htmlspecialchars($nm) ?> down">&darr;</button>
+                </div>
+            <?php if ($wapOvNm === null) { ?>
+                <div class="wap-order-note"><em>This user's id cannot form a settings key, so a per-user order cannot be saved for them. They follow the global order.</em></div>
+            <?php } else { ?>
+                <div class="wap-order-note">
+                    <input type="checkbox" id="<?= $wapUid ?>_ov" data-wap-override="<?= htmlspecialchars($wapOvNm) ?>"<?= $wapHasOv ? ' checked' : '' ?>>
+                    <label for="<?= $wapUid ?>_ov">Override the global order</label>
+                </div>
+                <?php
+                // TWO fields carry the override state, because one cannot.
+                //
+                // The hidden value field is DISABLED when the override is off, so it
+                // is not posted and cannot overwrite the saved order. But NOT
+                // posting is not enough to REMOVE: /update.php merges, seeding its
+                // key map from the existing .cfg, so an unposted key survives with
+                // its old value. Unticking was therefore a permanent no-op.
+                //
+                // So the state also rides in an ALWAYS-ENABLED '#wap_ov_<suffix>'
+                // flag. '#'-prefixed fields reach $_POST but are never written to the
+                // .cfg (the '#clear_api_key' idiom), and the presave turns an
+                // explicit '0' into a real removal from update.php's key map. A
+                // MISSING flag means "leave alone", so a save from a branch that
+                // renders no user rows cannot wipe anything.
+                //
+                // Both states are rendered server-side rather than left to order.js,
+                // so a no-JS save is faithful to what was already saved.
+                ?>
+                <input type="hidden" name="#wap_ov_<?= htmlspecialchars((string) $wapKeyId) ?>" data-wap-override-flag="<?= htmlspecialchars($wapOvNm) ?>" value="<?= $wapHasOv ? '1' : '0' ?>">
+                <div data-wap-override-panel="<?= htmlspecialchars($wapOvNm) ?>" class="wap-order-panel"<?= $wapHasOv ? '' : ' hidden' ?>>
+                    <input type="hidden" name="<?= htmlspecialchars($wapOvNm) ?>" value="<?= htmlspecialchars(implode(',', $wapUOrder)) ?>"<?= $wapHasOv ? '' : ' disabled' ?>>
+                    <div data-wap-order="<?= htmlspecialchars($wapOvNm) ?>" class="wap-order">
+                    <?php foreach ($wapOrderRows($wapUOrder) as $wapTok) {
+                        [, $wapTlabel] = $wapAllTiers[$wapTok];
+                        $wapRid = "{$wapUid}_t_{$wapTok}";
+                        // UNNAMED on purpose: this box's state rides in the csv. A
+                        // name would post a stray .cfg key and shadow the global
+                        // TIER_<K>_ENABLED field the budget meter reads by name.
+                        ?>
+                        <div data-wap-tier="<?= htmlspecialchars($wapTok) ?>" class="wap-order-row">
+                            <input type="checkbox" id="<?= $wapRid ?>"<?= \in_array($wapTok, $wapUOrder, true) ? ' checked' : '' ?>>
+                            <label for="<?= $wapRid ?>"><?= htmlspecialchars($wapTlabel) ?></label>
+                            <span class="wap-order-gap"></span>
+                            <button type="button" data-wap-move="up" aria-label="Move <?= htmlspecialchars($wapTlabel) ?> up for <?= htmlspecialchars($nm) ?>">&uarr;</button>
+                            <button type="button" data-wap-move="down" aria-label="Move <?= htmlspecialchars($wapTlabel) ?> down for <?= htmlspecialchars($nm) ?>">&darr;</button>
+                        </div>
+                    <?php } ?>
+                    </div>
+                </div>
+            <?php } ?>
+            </div>
+        <?php } ?>
+        </div>
+    <?php } ?>
     </dd>
 </dl>
-<blockquote class="inline_help">Users whose watch-state is preloaded. Leave all unchecked to include every user.</blockquote>
+<blockquote class="inline_help">Users whose watch-state is preloaded, highest priority first. Use the arrows to set rank. Rank breaks ties when the cache budget cannot cover everyone; it never starves a user of their top signal. Leave all unticked to include every user at equal rank.</blockquote>
 
 <dl>
     <dt>Libraries to scope</dt>
@@ -145,21 +409,36 @@ $wapTiers = [
 <dl>
     <dt>Signal tiers</dt>
     <dd>
-    <?php foreach ($wapTiers as [$wapTk, $wapTlabel]) {
-        // Match rc.preloadd's cfg_bool truthy set (1/true/yes/on) so the checkbox
-        // reflects exactly what rc render will emit, even for a hand-edited .cfg.
-        $wapTEn  = \in_array(strtolower((string) ($wapCfg["TIER_{$wapTk}_ENABLED"] ?? '1')), ['1', 'true', 'yes', 'on'], true);
+    <?php
+    // The hidden field is the wire format: order.js keeps it in sync with the row
+    // order and the tickboxes, and /update.php writes it straight to the .cfg.
+?>
+    <input type="hidden" name="TIER_ORDER" value="<?= htmlspecialchars(implode(',', $wapOrder)) ?>">
+    <div data-wap-order="TIER_ORDER" class="wap-order">
+    <?php foreach ($wapTierRows as $wapTok) {
+        [$wapTk, $wapTlabel] = $wapAllTiers[$wapTok];
+        // Ticked iff the tier is in the saved order: absence from the order IS
+        // disablement. The tickbox keeps its legacy TIER_<K>_ENABLED name because
+        // the budget meter reads that field by name; TIER_ORDER carries the
+        // ORDERING and this box the ENABLEMENT, and since order.js derives the
+        // csv from this same box the two cannot disagree.
+        $wapTEn  = \in_array($wapTok, $wapOrder, true);
         $wapTMax = (int) ($wapCfg["TIER_{$wapTk}_MAX"] ?? 0);
         ?>
-        <label style="display:block">
-            <input type="checkbox" name="TIER_<?= $wapTk ?>_ENABLED" value="1"<?= $wapTEn ? ' checked' : '' ?>>
-            <?= htmlspecialchars($wapTlabel) ?>
-            &nbsp; max items <input type="number" name="TIER_<?= $wapTk ?>_MAX" min="0" max="10000" step="1" value="<?= $wapTMax ?>" style="width:6em">
-        </label>
+        <div data-wap-tier="<?= htmlspecialchars($wapTok) ?>" class="wap-order-row">
+            <input type="checkbox" id="wap_tier_<?= htmlspecialchars($wapTok) ?>" name="TIER_<?= $wapTk ?>_ENABLED" value="1"<?= $wapTEn ? ' checked' : '' ?>>
+            <label for="wap_tier_<?= htmlspecialchars($wapTok) ?>"><?= htmlspecialchars($wapTlabel) ?></label>
+            <span class="wap-order-gap"></span>
+            <label for="wap_tier_max_<?= htmlspecialchars($wapTok) ?>">max items</label>
+            <input type="number" id="wap_tier_max_<?= htmlspecialchars($wapTok) ?>" name="TIER_<?= $wapTk ?>_MAX" min="0" max="10000" step="1" value="<?= $wapTMax ?>" style="width:6em">
+            <button type="button" data-wap-move="up" aria-label="Move <?= htmlspecialchars($wapTlabel) ?> up">&uarr;</button>
+            <button type="button" data-wap-move="down" aria-label="Move <?= htmlspecialchars($wapTlabel) ?> down">&darr;</button>
+        </div>
     <?php } ?>
+    </div>
     </dd>
 </dl>
-<blockquote class="inline_help">Which watch-signals contribute to the preload set, and a per-user item cap for each (0 = no limit). Priority order is fixed; unchecking a tier skips it entirely.</blockquote>
+<blockquote class="inline_help">The order signals warm in, highest priority first, and a per-user item cap for each (0 = no limit). Use the arrows to set priority; unticking a signal skips it entirely. Each enrolled user follows this order unless they override it in <strong>Users to preload</strong> above.</blockquote>
 
 <dl>
     <dt><label for="wap_ram_percent">RAM budget (percent)</label></dt>
@@ -223,6 +502,11 @@ $wapTiers = [
     <dd><span><input type="submit" value="Apply"></span></dd>
 </dl>
 </form>
+<?php
+// Unconditional, unlike meter.js: the order controls exist on every render, not
+// only when an estimate is cached. order.js self-initializes on DOMContentLoaded.
+?>
+<script src="/plugins/watch-aware-preloader/js/order.js"></script>
 
 <form markdown="false" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#command" value="/usr/local/emhttp/plugins/watch-aware-preloader/scripts/rc.preloadd">
@@ -276,6 +560,43 @@ $wapTiers = [
 </form>
 
 <style>
+/* [hidden] must beat the webGui's own display rules, or an inherited user's
+   override panel would still render while its field is disabled. SCOPED to this
+   plugin's own panel: a bare [hidden] selector is document-global and would also
+   outrank an inline display set by any webGui .show() on an unrelated element. */
+.wap-order-panel[hidden] { display: none !important; }
+/* The webGui sets a global button min-width (86px measured). An icon-only mover
+   inherits it and renders as a wide empty box with the glyph adrift, so the
+   min-width MUST be reset here - setting padding/line-height alone does not
+   win it back. */
+button[data-wap-move] {
+    min-width: 0; width: auto; flex: 0 0 auto;
+    line-height: 1; padding: .15em .45em; margin: 0;
+    font-size: 1em; text-align: center;
+}
+/* The rows are flex with a spacer, so they MUST be width-constrained: the
+   surrounding dd spans the full page, and an unconstrained row throws the
+   movers hundreds of px away from the label they act on. */
+.wap-order-row { display: flex; align-items: center; gap: .4em; padding: .15em 0; max-width: 26em; }
+.wap-order-gap { flex: 1 1 auto; }
+.wap-order-row > label { flex: 0 1 auto; }
+.wap-user-row { padding: .15em 0; }
+.wap-user-head { display: flex; align-items: center; gap: .4em; max-width: 26em; }
+.wap-user-head > label { flex: 0 1 auto; font-weight: bold; }
+.wap-user-gap { flex: 1 1 auto; }
+/* Rank badge. Blank (and dimmed) for an unenrolled user: rank is only
+   meaningful for someone actually in the warm set. */
+.wap-rank {
+    flex: 0 0 auto; min-width: 1.6em; height: 1.6em; padding: 0 .3em;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 3px; font-size: .82em; font-weight: bold;
+    font-variant-numeric: tabular-nums;
+    background: var(--wap-rank-bg, rgba(128,128,128,.22));
+}
+.wap-user-row.wap-off .wap-rank { opacity: .35; }
+.wap-user-row.wap-off .wap-user-head > label { font-weight: normal; opacity: .7; }
+.wap-order-note { margin: .1em 0 .1em 2.1em; }
+.wap-order-panel { margin: .2em 0 .5em 2.1em; padding: .3em 0 .3em .6em; border-left: 2px solid #888; max-width: 34em; }
 .wap-meter { max-width: 640px; margin: .5em 0 1em; }
 .wap-meter-label { font-weight: bold; }
 .wap-meter-note { font-weight: normal; opacity: .7; }
@@ -288,30 +609,6 @@ $wapTiers = [
 .wap-drop { margin-top: .2em; color: #c33; }
 .wap-stale { margin-top: .2em; color: #e0a020; font-style: italic; }
 </style>
-
-<?php if ($wapEstimate !== null) {
-    // Inert JSON data island. JSON_HEX_TAG escapes < and > to < / > so a
-    // "</script>" in any value cannot break out of the <script> element (this is
-    // the breakout guard; do not drop it). JSON_UNESCAPED_SLASHES keeps paths
-    // readable. Rows are already anonymized {u,t,l,b,r} - no id/title.
-    $wapEstJson = json_encode($wapEstimate, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
-    ?>
-<div id="wap-meter" class="wap-meter" data-state="ok">
-    <div class="wap-meter-label">Projected warm set
-        <?php if (!empty($wapEstimate['meta']['ceiling_truncated'])) { ?>
-        <span class="wap-meter-note">(estimate capped at <?= (int) ($wapEstimate['ceiling_per_user_tier'] ?? 0) ?>/tier)</span>
-        <?php } ?>
-    </div>
-    <div class="wap-bar"><div class="wap-bar-fill"></div></div>
-    <div class="wap-meter-text"></div>
-    <div class="wap-drop" style="display:none"></div>
-    <div class="wap-stale" style="display:none"></div>
-</div>
-<script type="application/json" id="wap-estimate"><?= $wapEstJson ?></script>
-<script src="/plugins/watch-aware-preloader/js/meter.js"></script>
-<?php } else { ?>
-<blockquote class="inline_help">Click <strong>Estimate budget</strong> to project your current selection against the cache budget.</blockquote>
-<?php } ?>
 
 <table class="tablesorter shift ups">
 <thead><tr><th>Watch-Aware Preloader - last run</th></tr></thead>

@@ -125,8 +125,10 @@ jobs:
         run: bash test/rc_preloadd_estimate_test.sh
       - name: .plg render CDATA safety test (#23)
         run: bash test/plg_render_test.sh
-      - name: JS meter unit test (pure aggregation)
-        run: node test/meter_test.js
+      - name: JS unit tests (pure aggregation + tier reorder)
+        run: |
+          node test/meter_test.js
+          node test/order_test.js
 
   shell-smoke:
     name: Install-by-URL Smoke
