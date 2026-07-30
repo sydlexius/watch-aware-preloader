@@ -83,3 +83,13 @@ linters:
         linters:
           - gosec
           - errcheck
+
+# Formatting is a CI gate, not just a local convention. Before this block only
+# scripts/pre-push-gate.sh checked `gofmt -l`, which a fork contributor never
+# runs - so an unformatted file passed Go Lint on PR #95. `gofmt` here matches
+# what `make fmt` writes, so `make fmt` always satisfies the gate. (gofumpt is
+# deliberately not used: it is stricter than `make fmt`, so the two would
+# disagree and `make fmt` could no longer clear CI.)
+formatters:
+  enable:
+    - gofmt
