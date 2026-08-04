@@ -96,7 +96,26 @@ php-test: ## Run plain-PHP unit tests (test/*_test.php) + the render contract te
 	bash test/rc_preloadd_render_test.sh
 	bash test/rc_preloadd_estimate_test.sh
 	bash test/plg_render_test.sh
-	node test/meter_test.js
+	@# Standalone scripts (assert-and-exit) vs node:test suites (*_dom_test.js).
+	@# The DOM suites need the test runner, so they are excluded from the first loop.
+	@for t in test/*_test.js; do \
+		[ -e "$$t" ] || continue; \
+		case "$$t" in *_dom_test.js) continue ;; esac; \
+		echo "== $$t =="; node "$$t" || exit 1; \
+	done
+	@for t in test/*_dom_test.js; do [ -e "$$t" ] || continue; echo "== $$t =="; node --test "$$t" || exit 1; done
+
+.PHONY: js-lint
+js-lint: ## Lint the plugin's browser JS + the headless tests (ESLint)
+	@if [ -d node_modules ]; then \
+		npx eslint . ; \
+	else \
+		echo "node_modules absent - run 'npm ci' first" >&2 ; exit 1 ; \
+	fi
+
+.PHONY: js-install
+js-install: ## Install the dev-only JS tooling (ESLint, jsdom)
+	npm ci
 
 .PHONY: smoke-test
 smoke-test: ## Smoke-test the install-by-URL cron-collation flow (#26)

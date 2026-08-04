@@ -10,7 +10,11 @@
 #   5. go build       -- cross-compile linux/amd64 for the daemon
 #   6. PHP lint       -- phpstan + php-cs-fixer (only when .php/.page files exist
 #                        and vendor/bin/phpstan is present)
-#   7. smoke-install  -- install-by-URL cron-collation smoke test (#26)
+#   7. JS lint        -- eslint over the plugin's browser JS (SKIP with warning
+#                        when node_modules is absent)
+#   8. plugin tests   -- the PHP/bash/JS suites CI enforces, so a broken one
+#                        fails HERE rather than after the push (#86)
+#   9. smoke-install  -- install-by-URL cron-collation smoke test (#26)
 #
 # Exit 0 = all checks passed; non-zero = first failure.
 
@@ -63,8 +67,57 @@ if find plugin/ src/ -type f \( -name '*.php' -o -name '*.page' \) 2>/dev/null |
     vendor/bin/php-cs-fixer fix --dry-run --diff
     echo "OK"
 else
-    echo "SKIP: no PHP files under plugin/ or src/, or vendor/bin/phpstan not present"
+    echo "SKIP (warning): no PHP files under plugin/ or src/, or vendor/bin/phpstan not present - run 'make php-install' to lint locally"
 fi
+
+echo ""
+echo "=== JS lint (eslint) ==="
+if [ -d node_modules ] && [ -x node_modules/.bin/eslint ]; then
+    npx eslint .
+    echo "OK"
+elif command -v node >/dev/null 2>&1; then
+    echo "SKIP (warning): node_modules absent - run 'npm ci' to lint the plugin JS"
+else
+    echo "SKIP (warning): node not installed - the plugin JS is unlinted locally"
+fi
+
+echo ""
+echo "=== plugin tests (PHP / bash / JS) ==="
+# CI enforces these in its PHP-tests job; running them here keeps the local gate
+# from being a strict subset of CI (#86). Optional toolchains warn on absence
+# rather than passing silently, so a missing interpreter is visible.
+if command -v php >/dev/null 2>&1; then
+    for t in test/*_test.php; do
+        [ -e "$t" ] || continue
+        echo "== $t =="
+        php "$t"
+    done
+else
+    echo "SKIP (warning): php not installed - the PHP unit tests did not run"
+fi
+
+for t in test/rc_preloadd_render_test.sh test/rc_preloadd_estimate_test.sh test/plg_render_test.sh; do
+    [ -e "$t" ] || continue
+    echo "== $t =="
+    bash "$t"
+done
+
+if command -v node >/dev/null 2>&1; then
+    for t in test/*_test.js; do
+        [ -e "$t" ] || continue
+        case "$t" in *_dom_test.js) continue ;; esac
+        echo "== $t =="
+        node "$t"
+    done
+    for t in test/*_dom_test.js; do
+        [ -e "$t" ] || continue
+        echo "== $t =="
+        node --test "$t"
+    done
+else
+    echo "SKIP (warning): node not installed - the JS unit and DOM tests did not run"
+fi
+echo "OK"
 
 echo ""
 echo "=== smoke-install ==="
