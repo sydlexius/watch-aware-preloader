@@ -33,6 +33,12 @@ over a supervised service to avoid init-script/restart/update complexity.
 
 ## Style and Conventions
 
+- **Keep every GitHub-facing surface G-rated and professional** - commit messages, PR
+  titles/bodies, issue titles/bodies, bot-review replies, branch names, release
+  notes, labels. No profanity, crude language, or informal slang (e.g. "kludge",
+  "hack", "sucks"); prefer "workaround", "defect", "does not work". When quoting
+  maintainer feedback into an issue or PR, paraphrase the slang out. This is a
+  public repo; keep the record clean.
 - **Go 1.26+**, `net/http` stdlib (no third-party router), `log/slog` for logging.
 - Single static binary `preloadd` - no CGO, no runtime deps on the Unraid host.
 - Internally decoupled units, each independently testable (see Architecture).
