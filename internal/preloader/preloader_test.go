@@ -207,6 +207,58 @@ func TestNoTruncationWarningWhenTheHeadFits(t *testing.T) {
 	}
 }
 
+func TestPoolResidentSizesWithoutASpinUpAllowance(t *testing.T) {
+	// A pool never spins down, so the spin-up allowance buys nothing there. The
+	// head should drop to the floor, freeing budget for array-resident items.
+	cache := &fakeCache{resident: -1}
+	fs := fakeFS{"/mnt/cache/TV/a.mkv": 8 << 30, "/mnt/user/TV/b.mkv": 8 << 30}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	onPool := func(hostPath string) bool { return strings.HasPrefix(hostPath, "/mnt/cache/") }
+
+	p := New(testCfg(), cache, pathmap.New(nil), fs, log, WithPoolResident(onPool))
+
+	pooled := p.planWarm(
+		core.PreloadTarget{Item: core.MediaItem{ServerPath: "/mnt/cache/TV/a.mkv", BitrateBps: 25_000_000}, Tier: core.TierNextUp},
+		"/mnt/cache/TV/a.mkv", 8<<30)
+	if pooled.head != testCfg().MinHeadBytes {
+		t.Errorf("pooled head = %d, want the floor %d", pooled.head, testCfg().MinHeadBytes)
+	}
+
+	// Same item on the array keeps the full duration-based head.
+	onArray := p.planWarm(
+		core.PreloadTarget{Item: core.MediaItem{ServerPath: "/mnt/user/TV/b.mkv", BitrateBps: 25_000_000}, Tier: core.TierNextUp},
+		"/mnt/user/TV/b.mkv", 8<<30)
+	want := HeadBytes(testCfg(), core.MediaItem{BitrateBps: 25_000_000})
+	if onArray.head != want {
+		t.Errorf("array head = %d, want the full %d", onArray.head, want)
+	}
+	if onArray.head <= pooled.head {
+		t.Error("array head is not larger than the pooled head; the optimisation did nothing")
+	}
+}
+
+func TestUncertainPlacementSizesForTheArray(t *testing.T) {
+	// The safety property: the optimisation applies ONLY on a positive answer.
+	// A wrong SMALL head silently reintroduces the stall this project removes,
+	// so every uncertain case must size as if the file were on a spinning disk.
+	cache := &fakeCache{resident: -1}
+	fs := fakeFS{"/mnt/user/TV/a.mkv": 8 << 30}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	it := core.MediaItem{ServerPath: "/mnt/user/TV/a.mkv", BitrateBps: 25_000_000}
+	want := HeadBytes(testCfg(), it)
+
+	for name, opts := range map[string][]Option{
+		"no resolver configured":      nil,
+		"resolver says not on a pool": {WithPoolResident(func(string) bool { return false })},
+	} {
+		p := New(testCfg(), cache, pathmap.New(nil), fs, log, opts...)
+		got := p.planWarm(core.PreloadTarget{Item: it, Tier: core.TierNextUp}, "/mnt/user/TV/a.mkv", 8<<30)
+		if got.head != want {
+			t.Errorf("%s: head = %d, want the full array-sized %d", name, got.head, want)
+		}
+	}
+}
+
 func TestRunSkipsMissingAndBudgets(t *testing.T) {
 	cache := &fakeCache{resident: -1} // unknown residency => always warm
 	fs := fakeFS{"/mnt/user/TV/a.mkv": 5 << 30}

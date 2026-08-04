@@ -75,11 +75,35 @@ type Preloader struct {
 	fs      FS
 	log     *slog.Logger
 	inspect func(path string, size int64) (container.Layout, bool)
+	// poolResident reports whether a host path lives on a pool (cache/NVMe)
+	// rather than a spinning array disk. Nil means "unknown", which sizes every
+	// item as if it were on the array - the conservative answer, and the one a
+	// non-Unraid host or a containerised deployment gets.
+	poolResident func(hostPath string) bool
+}
+
+// Option configures optional Preloader behavior.
+type Option func(*Preloader)
+
+// WithPoolResident supplies a predicate reporting whether a host path lives on a
+// pool. A file on a pool needs no spin-up allowance, because that disk never
+// spun down (#113).
+//
+// The predicate is deliberately a plain function rather than a concrete
+// resolver: sizing must not depend on Unraid specifics, and a caller that cannot
+// resolve placement simply does not pass one.
+func WithPoolResident(fn func(hostPath string) bool) Option {
+	return func(p *Preloader) { p.poolResident = fn }
 }
 
 // New builds a Preloader.
-func New(cfg Config, cache pagecache.Cache, mapper *pathmap.Mapper, fs FS, log *slog.Logger) *Preloader {
-	return &Preloader{cfg: cfg, cache: cache, mapper: mapper, fs: fs, log: log, inspect: container.Inspect}
+func New(cfg Config, cache pagecache.Cache, mapper *pathmap.Mapper, fs FS, log *slog.Logger, opts ...Option) *Preloader {
+	p := &Preloader{cfg: cfg, cache: cache, mapper: mapper, fs: fs, log: log, inspect: container.Inspect}
+	for _, o := range opts {
+		o(p)
+	}
+
+	return p
 }
 
 // ToHost maps a server-reported path to its host path via the configured path
@@ -235,8 +259,26 @@ type warmRanges struct {
 // falling back to the flat TailBytes tail otherwise. hostPath is the mapped
 // on-host path used to inspect the container.
 func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) warmRanges {
-	hp := PlanHead(p.cfg, t.Item)
+	cfg := p.cfg
+	// A file on a pool needs no SPIN-UP allowance: that disk never spun down, so
+	// the only costs left on the playback path are seek and transfer, both orders
+	// of magnitude smaller (#113). Dropping to the floor frees budget for
+	// array-resident items, where the allowance actually earns its place.
+	//
+	// This is strictly an optimisation, so it applies ONLY on a positive answer.
+	// No resolver, an unresolvable path, or anything else uncertain sizes for the
+	// array - a wrong small head silently reintroduces the stall this project
+	// exists to remove, which is far worse than a wrong large one.
+	pooled := p.poolResident != nil && p.poolResident(hostPath)
+	if pooled {
+		cfg.TargetSeconds = 0 // the floor (MinHeadBytes) then governs
+	}
+	hp := PlanHead(cfg, t.Item)
 	head := hp.Bytes
+	if pooled {
+		p.log.Debug("pool-resident: sized without a spin-up allowance",
+			"path", hostPath, "head_bytes", head)
+	}
 	if hp.Truncated {
 		// Surfaced per item rather than counted: the operator needs to know WHICH
 		// content is under-covered, and by how much, to judge whether raising
