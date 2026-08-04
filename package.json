@@ -1,0 +1,17 @@
+{
+  "name": "watch-aware-preloader-devtools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only JS tooling (ESLint, jsdom) for the Unraid plugin's browser scripts. Ships nothing: the plugin loads plain script-scope .js files with no bundler and no runtime dependencies.",
+  "license": "MIT",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.9.0",
+    "jsdom": "^30.0.1"
+  }
+}

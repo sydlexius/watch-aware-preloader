@@ -41,3 +41,7 @@ src/usr/local/emhttp/plugins/watch-aware-preloader/preloadd
 
 # Local-only working docs (design specs, plans, verification) - not published
 docs/private/
+
+# Dev-only JS tooling (ESLint, jsdom). The plugin ships no JS dependencies:
+# its browser scripts are plain script-scope files loaded by a bare <script src>.
+node_modules/
