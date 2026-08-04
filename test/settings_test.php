@@ -195,7 +195,8 @@ $mergeWrite = static function (array $existing, array $post): array {
     wap_sanitize_settings_post($post);       // the #include hook, step 1
     wap_apply_override_removals($post, $keys); // the #include hook, step 2
     foreach ($post as $k => $v) {            // update.php's overlay
-        if ($k[0] !== '#') {
+        // Cast: a foreach key can be an int, and $k[0] on an int is a TypeError.
+        if (!str_starts_with((string) $k, '#')) {
             $keys[$k] = $v;
         }
     }
@@ -209,6 +210,17 @@ $out = $mergeWrite(
     ['TIER_ORDER' => 'resume', '#wap_ov_id_a' => '0']
 );
 check(!isset($out['TIER_ORDER_id_a']), 'unticking an override removes the key');
+
+// A stale or crafted value posted alongside an explicit '0' must not resurrect the
+// key. This pins the $post half of the removal: unsetting only $keys would let the
+// overlay right after it write the posted value straight back. (It does NOT pin the
+// step ORDER - running the removal after the overlay unsets from $keys and reaches
+// the same map - so do not read it as an ordering guard.)
+$out = $mergeWrite(
+    ['TIER_ORDER_id_a' => 'recent'],
+    ['TIER_ORDER' => 'resume', '#wap_ov_id_a' => '0', 'TIER_ORDER_id_a' => 'nextup']
+);
+check(!isset($out['TIER_ORDER_id_a']), 'removal beats a posted value for the same key');
 
 // Ticking it keeps the posted value.
 $out = $mergeWrite(

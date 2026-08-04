@@ -274,11 +274,16 @@ foreach ($wapCfg as $wapK => $wapV) {
             if ($pos === false) {
                 $wapRest[] = $u;
             } else {
-                $wapEnrolled[$pos] = $u;
+                // Keyed by $pos would DROP a row: two users can match the same csv
+                // index when one user's id equals another's display name (the
+                // legacy name-based selection), and the later one would overwrite
+                // the earlier. Carry the position alongside instead.
+                $wapEnrolled[] = ['pos' => $pos, 'u' => $u];
             }
         }
-        ksort($wapEnrolled);
-        $wapRanked = array_merge(array_values($wapEnrolled), $wapRest);
+        // PHP 8's sort is stable, so a shared $pos keeps $wapUsers order.
+        usort($wapEnrolled, static fn (array $x, array $y): int => $x['pos'] <=> $y['pos']);
+        $wapRanked = array_merge(array_column($wapEnrolled, 'u'), $wapRest);
         // Suffix -> how many users claim it, so a non-injective collision can be
         // detected before any override control is rendered.
         $wapKeyCounts = $wapKeyIdCounts($wapUsers);

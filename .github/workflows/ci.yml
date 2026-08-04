@@ -125,10 +125,16 @@ jobs:
         run: bash test/rc_preloadd_estimate_test.sh
       - name: .plg render CDATA safety test (#23)
         run: bash test/plg_render_test.sh
-      - name: JS unit tests (pure aggregation + tier reorder)
+      - name: JS unit tests (test/*_test.js)
         run: |
-          node test/meter_test.js
-          node test/order_test.js
+          shopt -s nullglob
+          found=0
+          for t in test/*_test.js; do
+            found=1
+            echo "== $t =="
+            node "$t"
+          done
+          [ "$found" -eq 1 ] || echo "no JS test scripts yet - skipping"
 
   shell-smoke:
     name: Install-by-URL Smoke
