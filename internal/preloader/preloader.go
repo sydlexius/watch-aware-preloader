@@ -89,20 +89,59 @@ func (p *Preloader) ToHost(serverPath string) (string, bool) {
 	return p.mapper.ToHost(serverPath)
 }
 
+// HeadPlan is the outcome of sizing an item's head read: the bytes to warm, and
+// whether the byte clamp overrode the requested duration.
+//
+// The distinction matters because MaxHeadBytes is denominated in BYTES while
+// target_seconds is denominated in TIME, so the coverage the clamp permits
+// shrinks as bitrate rises. Past roughly 84 Mbps at the default 20s/250MB the
+// clamp binds first, and from there raising target_seconds changes nothing: the
+// dial that appears to control coverage silently stops controlling it, on
+// exactly the high-bitrate content where a stall is most noticeable. Reporting
+// it is what makes that visible rather than inferable (#112).
+type HeadPlan struct {
+	// Bytes is the head size to warm.
+	Bytes int64
+	// CoveredSeconds is how much playback Bytes actually covers at this item's
+	// bitrate. It equals the configured target in the ordinary case, but is
+	// LARGER when MinHeadBytes raised a small request, SMALLER when Truncated,
+	// and falls back to the configured target when the bitrate is unknown -
+	// there is nothing to divide by, so it is the request rather than a
+	// measurement. Read it as "what this head buys", not "what was asked for".
+	CoveredSeconds float64
+	// Truncated reports that MaxHeadBytes cut the request short.
+	Truncated bool
+}
+
 // HeadBytes computes the duration-based head size for an item, clamped.
 func HeadBytes(cfg Config, it core.MediaItem) int64 {
+	return PlanHead(cfg, it).Bytes
+}
+
+// PlanHead sizes an item's head read and reports whether the byte clamp
+// overrode the requested duration. See HeadPlan.CoveredSeconds for the cases
+// where the coverage differs from the configured target in either direction.
+func PlanHead(cfg Config, it core.MediaItem) HeadPlan {
 	bps := it.BitrateBps
 	if bps <= 0 && it.Runtime > 0 {
 		bps = int64(float64(it.SizeBytes) / it.Runtime.Seconds() * 8)
 	}
 	want := int64(cfg.TargetSeconds) * bps / 8
+	out := HeadPlan{Bytes: want, CoveredSeconds: float64(cfg.TargetSeconds)}
 	if want < cfg.MinHeadBytes {
-		want = cfg.MinHeadBytes
+		// The floor raising a small request is not truncation - it grants MORE
+		// coverage than asked for, so nothing is being silently lost.
+		out.Bytes = cfg.MinHeadBytes
 	}
 	if want > cfg.MaxHeadBytes {
-		want = cfg.MaxHeadBytes
+		out.Bytes = cfg.MaxHeadBytes
+		out.Truncated = true
 	}
-	return want
+	if bps > 0 {
+		out.CoveredSeconds = float64(out.Bytes) * 8 / float64(bps)
+	}
+
+	return out
 }
 
 // Run warms targets in order until the budget is exhausted.
@@ -196,7 +235,18 @@ type warmRanges struct {
 // falling back to the flat TailBytes tail otherwise. hostPath is the mapped
 // on-host path used to inspect the container.
 func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) warmRanges {
-	head := HeadBytes(p.cfg, t.Item)
+	hp := PlanHead(p.cfg, t.Item)
+	head := hp.Bytes
+	if hp.Truncated {
+		// Surfaced per item rather than counted: the operator needs to know WHICH
+		// content is under-covered, and by how much, to judge whether raising
+		// max_head_mb is worth the budget. A bare count would not say that.
+		p.log.Warn("head truncated by max_head_mb",
+			"path", hostPath,
+			"covered_seconds", int64(hp.CoveredSeconds),
+			"target_seconds", p.cfg.TargetSeconds,
+			"max_head_bytes", p.cfg.MaxHeadBytes)
+	}
 	offset := int64(0)
 	seeking := t.Tier == core.TierResume
 	if seeking {

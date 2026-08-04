@@ -25,6 +25,12 @@ const estimateResumeFrontBytes = 16 << 20
 // bitrate-based when BitrateBps is known and geometry-based - SizeBytes/Runtime -
 // otherwise) plus the flat tail window, plus a fixed front allowance for resume
 // targets. It intentionally over-estimates slightly relative to a real sweep.
+// The projection deliberately uses the SAME sizing call as a real sweep. When
+// max_head_mb truncates a head (#112), the projected bytes are truncated
+// identically - so the budget meter keeps agreeing with what the sweep will
+// actually warm. Surfacing the truncation in the estimate payload would need an
+// estimate.json schema bump in lock step with the PHP reader, so it is left to
+// the change that decides what the UI should do about it.
 func projectBytes(cfg preloader.Config, it core.MediaItem, tier core.Tier) int64 {
 	b := preloader.HeadBytes(cfg, it) + cfg.TailBytes
 	if tier == core.TierResume {
