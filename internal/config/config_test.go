@@ -441,8 +441,10 @@ func TestTierOrderResolution(t *testing.T) {
 		{"legacy all true is the full order",
 			"[tiers.resume]\nenabled = true\n[tiers.next_up]\nenabled = true\n[tiers.recently_added]\nenabled = true\n",
 			full},
-		// Legacy dials, deny-list reading: with only false values stated, an absent
-		// key keeps its pre-dials default (on), so only the stated tiers drop out.
+		// Legacy dials, deny-list reading: with only false values stated, only the
+		// stated tiers drop out. Note this is a deliberate DEPARTURE from the
+		// pre-order loader, which decoded an unstated `enabled` to false once
+		// [tiers] existed and so warmed nothing here (see deriveLegacyOrder).
 		{"legacy single false is a deny-list", "[tiers.next_up]\nenabled = false\n",
 			TierOrder{core.TierResume, core.TierRecentlyAdded}},
 		{"legacy all false warms nothing",
