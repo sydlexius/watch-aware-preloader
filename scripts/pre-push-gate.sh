@@ -63,13 +63,26 @@ else
     # catches a stale entry from ANY removed worktree rather than only the
     # conventional .claude/worktrees location. A genuine finding always names a
     # file that is present, so this cannot mask one.
+    # Written WITHOUT an early-terminating pipeline on purpose. Under the
+    # `set -o pipefail` above, a `break` inside a `while read` (or a `grep -q`)
+    # closes the pipe while upstream commands are still writing, so they take
+    # SIGPIPE and the pipeline reports failure even when the scan succeeded -
+    # the function would return false and the retry would never fire, exactly
+    # when it was needed. The loop reads every candidate and sets a flag.
     lint_stale() {
-        printf '%s' "$1" \
-            | grep -oE '^[^ :]+\.go:[0-9]+:' \
-            | cut -d: -f1 \
-            | sort -u \
-            | while read -r f; do [ -e "$f" ] || { echo stale; break; }; done \
-            | grep -q stale
+        local files f found=1
+        files=$(printf '%s' "$1" | grep -oE '^[^ :]+\.go:[0-9]+:' | cut -d: -f1 | sort -u) || true
+        [ -n "$files" ] || return 1
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if [ ! -e "$f" ]; then
+                found=0
+            fi
+        done <<EOF_FILES
+$files
+EOF_FILES
+
+        return "$found"
     }
 
     lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
