@@ -38,8 +38,13 @@ export default [
             'no-var': 'error',
             'prefer-const': 'error',
             'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-            // The meter and order scripts build strings and arrays inside loops;
-            // flag the accidental O(n^2) rebuild that bot review caught by hand.
+            // Catches a function declared inside a loop that closes over an
+            // unsafe binding (the classic `var` capture), NOT the O(n^2)
+            // array-rebuild pattern - verified: the rule fires on a closure over
+            // a loop `var` and stays silent on a `concat` rebuild. Both scripts
+            // build arrays in loops and pass callbacks around, so the closure
+            // hazard is the real risk here; the rebuild pattern has no lint
+            // coverage and is caught by review.
             'no-loop-func': 'error',
         },
     },

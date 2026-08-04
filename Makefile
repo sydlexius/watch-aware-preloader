@@ -107,10 +107,10 @@ php-test: ## Run plain-PHP unit tests (test/*_test.php) + the render contract te
 
 .PHONY: js-lint
 js-lint: ## Lint the plugin's browser JS + the headless tests (ESLint)
-	@if [ -d node_modules ]; then \
-		npx eslint . ; \
+	@if [ -x node_modules/.bin/eslint ]; then \
+		./node_modules/.bin/eslint . ; \
 	else \
-		echo "node_modules absent - run 'npm ci' first" >&2 ; exit 1 ; \
+		echo "eslint not installed - run 'make js-install' first" >&2 ; exit 1 ; \
 	fi
 
 .PHONY: js-install

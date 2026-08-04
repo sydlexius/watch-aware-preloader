@@ -72,8 +72,11 @@ fi
 
 echo ""
 echo "=== JS lint (eslint) ==="
-if [ -d node_modules ] && [ -x node_modules/.bin/eslint ]; then
-    npx eslint .
+if [ -x node_modules/.bin/eslint ]; then
+    # The verified binary is invoked directly rather than through npx: npx adds
+    # its own resolution layer (and prints npm notice lines into the gate
+    # output), which is exactly the nondeterminism a gate should not have.
+    ./node_modules/.bin/eslint .
     echo "OK"
 elif command -v node >/dev/null 2>&1; then
     echo "SKIP (warning): node_modules absent - run 'npm ci' to lint the plugin JS"
