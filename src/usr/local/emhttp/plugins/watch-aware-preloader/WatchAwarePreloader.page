@@ -477,11 +477,51 @@ foreach ($wapCfg as $wapK => $wapV) {
     </dd>
 </dl>
 
+<?php
+// Repeatable from/to rows (#27). The .cfg wire format is unchanged - a single
+// semicolon-joined `from=>to` string - so rc.preloadd and the engine are
+// untouched; only the editing surface differs.
+//
+// The hidden field below carries the SAVED value and is rewritten by
+// pathmaps.js only when a row is edited. Without JS the rows are inert but the
+// hidden field still posts the saved value, so a script failure costs the
+// ability to edit, never the mapping itself. That matters because /update.php
+// overlays posted keys onto the existing .cfg: a posted-EMPTY value would
+// overwrite a good one, while an unposted key survives.
+$wapMapRows = [];
+foreach (explode(';', (string) ($wapCfg['PATH_MAPS'] ?? '')) as $wapChunk) {
+    $wapAt = strpos($wapChunk, '=>');
+    if ($wapAt === false) {
+        continue; // not a pair; drop rather than render a half row
+    }
+    $wapFrom = trim(substr($wapChunk, 0, $wapAt));
+    $wapTo   = trim(substr($wapChunk, $wapAt + 2));
+    if ($wapFrom !== '' && $wapTo !== '') {
+        $wapMapRows[] = ['from' => $wapFrom, 'to' => $wapTo];
+    }
+}
+if ($wapMapRows === []) {
+    $wapMapRows[] = ['from' => '', 'to' => '']; // always one editable row
+}
+?>
 <dl>
-    <dt><label for="wap_path_maps">Advanced: manual path-map override</label></dt>
-    <dd><input type="text" id="wap_path_maps" name="PATH_MAPS" value="<?= htmlspecialchars((string) ($wapCfg['PATH_MAPS'] ?? '')) ?>"></dd>
+    <dt><label for="wap_path_map_from_1">Advanced: manual path-map override</label></dt>
+    <dd data-wap-pathmap-field="">
+        <input type="hidden" name="PATH_MAPS" value="<?= htmlspecialchars((string) ($wapCfg['PATH_MAPS'] ?? '')) ?>">
+        <div data-wap-pathmap-list="" class="wap-pathmap">
+        <?php foreach ($wapMapRows as $wapI => $wapRow) { ?>
+            <div data-wap-pathmap-row="" class="wap-pathmap-row">
+                <input type="text" <?= $wapI === 0 ? 'id="wap_path_map_from_1" ' : '' ?>data-wap-pathmap="from" value="<?= htmlspecialchars($wapRow['from']) ?>" placeholder="/share" aria-label="Server path <?= (int) $wapI + 1 ?>">
+                <span class="wap-pathmap-arrow">&rarr;</span>
+                <input type="text" data-wap-pathmap="to" value="<?= htmlspecialchars($wapRow['to']) ?>" placeholder="/mnt/user" aria-label="Host path <?= (int) $wapI + 1 ?>">
+                <button type="button" data-wap-pathmap-remove="" aria-label="Remove path-map rule <?= (int) $wapI + 1 ?>">&minus;</button>
+            </div>
+        <?php } ?>
+        </div>
+        <button type="button" data-wap-pathmap-add="">Add rule</button>
+    </dd>
 </dl>
-<blockquote class="inline_help">Optional extra <code>from=&gt;to</code> pairs separated by semicolons; these override auto-detected rules. Usually leave blank.</blockquote>
+<blockquote class="inline_help">Optional rules rewriting a server-reported path to its host path; these override auto-detected rules. Usually leave blank.</blockquote>
 
 <dl>
     <dt><label for="wap_cron_interval">Schedule interval (minutes)</label></dt>
@@ -512,6 +552,7 @@ foreach ($wapCfg as $wapK => $wapV) {
 // only when an estimate is cached. order.js self-initializes on DOMContentLoaded.
 ?>
 <script src="/plugins/watch-aware-preloader/js/order.js"></script>
+<script src="/plugins/watch-aware-preloader/js/pathmaps.js"></script>
 
 <form markdown="false" method="POST" action="/update.php" target="progressFrame">
 <input type="hidden" name="#command" value="/usr/local/emhttp/plugins/watch-aware-preloader/scripts/rc.preloadd">
