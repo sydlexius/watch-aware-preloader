@@ -234,7 +234,11 @@ if ($wapEstimate !== null) {
     // steady state this number trends toward zero. Calling it "warm set" would
     // make a working preloader look like a failing one - hence "warmed on the
     // last run", with the skipped count alongside so a small bar reads as
-    // "little left to do" rather than "nothing is cached".
+    // "little left to do" rather than "nothing is cached". The skipped clause
+    // describes ONLY the skipped items: an earlier wording said "nothing was
+    // re-read", which contradicts a nonzero warmed figure on the same line
+    // whenever a sweep both warmed some items and skipped others - the common
+    // case, not an edge one.
     $wapBudget  = (int) ($wapStatus['budget_bytes'] ?? 0);
     $wapWarmed  = (int) ($wapStatus['bytes_warmed'] ?? 0);
     $wapPct     = $wapBudget > 0 ? min(100.0, $wapWarmed / $wapBudget * 100) : 0.0;
@@ -245,7 +249,7 @@ if ($wapEstimate !== null) {
         <span class="wap-meter-note">(<?= htmlspecialchars(wap_format_pacific((string) ($wapStatus['last_run'] ?? ''))) ?>)</span>
     </div>
     <div class="wap-bar"><div class="wap-bar-fill" style="width: <?= number_format($wapPct, 1, '.', '') ?>%"></div></div>
-    <div class="wap-meter-text"><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?> - <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached, so nothing was re-read<?php } ?></div>
+    <div class="wap-meter-text"><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?> - <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached and skipped<?php } ?></div>
 </div>
 <blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so a small bar on a healthy system means there was little left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
 <?php } else { ?>
