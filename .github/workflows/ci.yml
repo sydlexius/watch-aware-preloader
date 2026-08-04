@@ -147,13 +147,25 @@ jobs:
       - name: JS DOM tests (test/*_dom_test.js, jsdom)
         run: |
           shopt -s nullglob
+          # CI ASSERTS presence rather than tolerating absence. The local gate
+          # legitimately skips these when jsdom is not installed (#108), so the
+          # runner is the one place that must prove they actually ran - a silent
+          # skip here would hide the whole DOM layer if a suite were renamed or
+          # the dependency dropped.
+          if [ ! -d node_modules/jsdom ]; then
+            echo "jsdom is missing after npm ci - the DOM tests cannot run" >&2
+            exit 1
+          fi
           found=0
           for t in test/*_dom_test.js; do
             found=1
             echo "== $t =="
             node --test "$t"
           done
-          [ "$found" -eq 1 ] || echo "no JS DOM test suites yet - skipping"
+          if [ "$found" -eq 0 ]; then
+            echo "no test/*_dom_test.js suites found - expected at least one" >&2
+            exit 1
+          fi
 
   shell-smoke:
     name: Install-by-URL Smoke

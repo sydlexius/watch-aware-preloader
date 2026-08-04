@@ -12,6 +12,9 @@
 #                        and vendor/bin/phpstan is present)
 #   7. JS lint        -- eslint over the plugin's browser JS (SKIP with warning
 #                        when node_modules is absent)
+#      NOTE: every optional toolchain here SKIPS WITH A WARNING when it is not
+#      installed and FAILS LOUDLY when it is. A missing tool must never look
+#      like a pass, and must never block a fresh clone from running the gate.
 #   8. plugin tests   -- the PHP/bash/JS suites CI enforces, so a broken one
 #                        fails HERE rather than after the push (#86)
 #   9. smoke-install  -- install-by-URL cron-collation smoke test (#26)
@@ -112,11 +115,19 @@ if command -v node >/dev/null 2>&1; then
         echo "== $t =="
         node "$t"
     done
-    for t in test/*_dom_test.js; do
-        [ -e "$t" ] || continue
-        echo "== $t =="
-        node --test "$t"
-    done
+    # The DOM suites need jsdom from node_modules, not just an interpreter.
+    # Guarding these on `node` alone made a fresh clone fail the whole gate with
+    # a bare "Cannot find module 'jsdom'" that never named the fix (#108). An
+    # uninstalled optional toolchain warns; it does not fail.
+    if [ -d node_modules/jsdom ]; then
+        for t in test/*_dom_test.js; do
+            [ -e "$t" ] || continue
+            echo "== $t =="
+            node --test "$t"
+        done
+    elif ls test/*_dom_test.js >/dev/null 2>&1; then
+        echo "SKIP (warning): jsdom absent - run 'npm ci' to run the DOM tests"
+    fi
 else
     echo "SKIP (warning): node not installed - the JS unit and DOM tests did not run"
 fi
