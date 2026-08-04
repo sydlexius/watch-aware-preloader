@@ -86,6 +86,16 @@ function wap_read_estimate(string $path): ?array
 }
 
 /**
+ * Format a byte count as GiB with one decimal, matching the units the budget
+ * meter's JavaScript uses (wapFmtGiB in js/meter.js) so the server-rendered bar
+ * and the live projection cannot disagree on how the same number reads.
+ */
+function wap_gib(int $bytes): string
+{
+    return number_format($bytes / 1073741824, 1, '.', '') . ' GiB';
+}
+
+/**
  * Convert an RFC3339 UTC timestamp to a labeled US Pacific string, e.g.
  * "2026-06-30 14:05:00 PDT". Returns the input unchanged if it cannot be parsed.
  */
