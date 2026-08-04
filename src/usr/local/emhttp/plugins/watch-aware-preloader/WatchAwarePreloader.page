@@ -181,7 +181,31 @@ foreach ($wapCfg as $wapK => $wapV) {
 <thead><tr><th>Watch-Aware Preloader - settings</th></tr></thead>
 </table>
 
-<?php if ($wapEstimate !== null) {
+<?php
+// The meter has two possible sources, and they answer DIFFERENT questions.
+//
+//   estimate.json - what the CURRENT selection would warm. More specific, and
+//                   live: meter.js repaints it as controls change. But
+//                   rc.preloadd's render() deletes it on every save, precisely
+//                   so a projection computed under superseded settings is never
+//                   shown - so it is absent most of the time.
+//   status.json   - what the LAST SWEEP actually warmed. Always present after a
+//                   run, survives saves, needs no operator action (#114).
+//
+// The projection wins when it exists, because "what would my current selection
+// do" is the more useful answer while editing. Otherwise show the last run, so
+// the page is never blank when the engine has actually run.
+//
+// A FAILED run renders no bar: its byte counts describe a sweep that did not
+// complete, and a confident-looking bar over them would misreport.
+$wapMeterSource = null;
+if ($wapEstimate !== null) {
+    $wapMeterSource = 'estimate';
+} elseif ($wapStatus !== null && !empty($wapStatus['ok']) && (int) ($wapStatus['budget_bytes'] ?? 0) > 0) {
+    $wapMeterSource = 'status';
+}
+?>
+<?php if ($wapMeterSource === 'estimate') {
     // Inert JSON data island. JSON_HEX_TAG escapes < and > to < / > so a
     // "</script>" in any value cannot break out of the <script> element (this is
     // the breakout guard; do not drop it). JSON_UNESCAPED_SLASHES keeps paths
@@ -200,7 +224,30 @@ foreach ($wapCfg as $wapK => $wapV) {
     <div class="wap-stale" style="display:none"></div>
 </div>
 <script type="application/json" id="wap-estimate"><?= $wapEstJson ?></script>
-<script src="/plugins/watch-aware-preloader/js/meter.js"></script>
+<?php } elseif ($wapMeterSource === 'status') {
+    // Rendered server-side: this is a fixed historical fact, not a projection
+    // that reacts to the form, so it needs no JavaScript and is correct with
+    // scripting disabled.
+    //
+    // LABEL CARE: bytes_warmed counts what THIS SWEEP warmed. Items already
+    // resident are counted in `skipped` and contribute nothing, so in a healthy
+    // steady state this number trends toward zero. Calling it "warm set" would
+    // make a working preloader look like a failing one - hence "warmed on the
+    // last run", with the skipped count alongside so a small bar reads as
+    // "little left to do" rather than "nothing is cached".
+    $wapBudget  = (int) ($wapStatus['budget_bytes'] ?? 0);
+    $wapWarmed  = (int) ($wapStatus['bytes_warmed'] ?? 0);
+    $wapPct     = $wapBudget > 0 ? min(100.0, $wapWarmed / $wapBudget * 100) : 0.0;
+    $wapSkipped = (int) ($wapStatus['skipped'] ?? 0);
+    ?>
+<div id="wap-meter" class="wap-meter" data-state="ok">
+    <div class="wap-meter-label">Warmed on the last run
+        <span class="wap-meter-note">(<?= htmlspecialchars(wap_format_pacific((string) ($wapStatus['last_run'] ?? ''))) ?>)</span>
+    </div>
+    <div class="wap-bar"><div class="wap-bar-fill" style="width: <?= number_format($wapPct, 1, '.', '') ?>%"></div></div>
+    <div class="wap-meter-text"><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?> - <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached, so nothing was re-read<?php } ?></div>
+</div>
+<blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so a small bar on a healthy system means there was little left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
 <?php } else { ?>
 <blockquote class="inline_help">Click <strong>Estimate budget</strong> to project your current selection against the cache budget.</blockquote>
 <?php } ?>

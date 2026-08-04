@@ -116,6 +116,40 @@ check(wap_read_estimate($est) === null, 'estimate invalid JSON returns null');
 
 @unlink($est);
 
+// --- wap_gib: the server-rendered bar must read in the same units as the live
+// projection, or the same byte count appears to change when the source flips.
+check(wap_gib(0) === '0.0 GiB', 'zero formats as 0.0 GiB');
+check(wap_gib(1073741824) === '1.0 GiB', 'one GiB');
+check(wap_gib(2147483648) === '2.0 GiB', 'two GiB');
+check(wap_gib((int) (1073741824 * 10.56)) === '10.6 GiB', 'rounds to one decimal');
+// Matches js/meter.js wapFmtGiB, which divides by 1073741824 and toFixed(1).
+check(wap_gib(107374182) === '0.1 GiB', 'sub-GiB values still render');
+
+// --- meter source selection (#114). The .page picks a source before rendering;
+// these pin the RULES it encodes, since getting them wrong makes the bar either
+// vanish or misreport a failed run as a healthy one.
+$pick = static function (?array $estimate, ?array $status): ?string {
+    if ($estimate !== null) {
+        return 'estimate';
+    }
+    if ($status !== null && !empty($status['ok']) && (int) ($status['budget_bytes'] ?? 0) > 0) {
+        return 'status';
+    }
+
+    return null;
+};
+$okStatus = ['ok' => true, 'budget_bytes' => 17179869184, 'bytes_warmed' => 1073741824];
+
+check($pick(['rows' => []], $okStatus) === 'estimate', 'a projection wins over the last run');
+check($pick(null, $okStatus) === 'status', 'with no projection, the last run is shown');
+check($pick(null, null) === null, 'nothing to show before any run');
+// A failed sweep's byte counts describe a run that did not complete; rendering a
+// confident bar over them would misreport.
+check($pick(null, ['ok' => false, 'budget_bytes' => 17179869184]) === null, 'a failed run renders no bar');
+// budget_bytes is 0 when the engine could not read available RAM - dividing by it
+// would be a crash, and a bar with no scale means nothing.
+check($pick(null, ['ok' => true, 'budget_bytes' => 0]) === null, 'no budget means no bar');
+
 if ($failures > 0) {
     fwrite(STDERR, "{$failures} failure(s)\n");
     exit(1);
