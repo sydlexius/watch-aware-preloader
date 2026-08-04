@@ -116,13 +116,18 @@ function wapInitPathMaps() {
   const host = document.querySelector('[data-wap-pathmap-list]');
   if (!host) { return; }
 
-  // Bound on the document, not the host: the Add button is a SIBLING of the row
-  // list (it belongs to the field, not to any one row), so a host-bound listener
-  // would never see its clicks. Each handler re-checks that its target belongs
-  // to this field's list before acting.
-  document.addEventListener('click', function (ev) {
+  // The Add button is a SIBLING of the row list (it belongs to the field, not to
+  // any one row), so a list-bound listener would never see its clicks. The
+  // listener therefore sits on the enclosing field, and every handler re-tests
+  // that the clicked element really belongs to THIS editor - relying on the
+  // listener's position alone would make the scoping depend on page structure,
+  // which is exactly what breaks when the markup is reused elsewhere.
+  const field = host.closest('[data-wap-pathmap-field]') || host.parentNode;
+
+  field.addEventListener('click', function (ev) {
     const add = ev.target.closest('[data-wap-pathmap-add]');
-    if (add) {
+    // The Add button is outside the list, so it is scoped to the FIELD.
+    if (add && field.contains(add) && add.closest('[data-wap-pathmap-list]') === null) {
       ev.preventDefault();
       const row = wapPathMapNewRow(host);
       if (row) {
@@ -134,9 +139,14 @@ function wapInitPathMaps() {
     }
     const del = ev.target.closest('[data-wap-pathmap-remove]');
     if (del) {
-      ev.preventDefault();
       const row = del.closest('[data-wap-pathmap-row]');
-      if (row) { wapPathMapRemove(host, row); }
+      // Act only on a row of THIS list. Without the containment test a second
+      // path-map editor on the page (or any element reusing these attributes)
+      // would have its clicks applied to this one's host.
+      if (row && host.contains(row)) {
+        ev.preventDefault();
+        wapPathMapRemove(host, row);
+      }
     }
   });
 

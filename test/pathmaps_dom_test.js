@@ -32,7 +32,7 @@ function build(saved) {
         .filter(Boolean);
     if (rows.length === 0) { rows.push({ from: '', to: '' }); }
 
-    let html = '<!doctype html><html><body><form>';
+    let html = '<!doctype html><html><body><form><div data-wap-pathmap-field="">';
     html += `<input type="hidden" name="PATH_MAPS" value="${saved || ''}">`;
     html += '<div data-wap-pathmap-list="">';
     for (const r of rows) {
@@ -43,7 +43,7 @@ function build(saved) {
         html += '</div>';
     }
     html += '</div><button type="button" data-wap-pathmap-add="">Add rule</button>';
-    html += '</form></body></html>';
+    html += '</div></form></body></html>';
     return new JSDOM(html, { runScripts: 'outside-only' });
 }
 
@@ -63,7 +63,11 @@ function load(dom) {
 }
 
 const hiddenOf = (w) => w.document.querySelector('input[name="PATH_MAPS"]');
-const rowsOf = (w) => w.document.querySelectorAll('[data-wap-pathmap-row]');
+// Scoped to the editor's own list: a test that appends foreign markup must not
+// have it counted as one of this list's rows.
+const rowsOf = (w) => w.document
+    .querySelector('[data-wap-pathmap-list]')
+    .querySelectorAll(':scope > [data-wap-pathmap-row]');
 const fromOf = (w, i) => w.document.querySelectorAll('[data-wap-pathmap="from"]')[i];
 const toOf = (w, i) => w.document.querySelectorAll('[data-wap-pathmap="to"]')[i];
 const type = (w, el, value) => { el.value = value; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
@@ -136,6 +140,28 @@ test('a separator typed into a row cannot inject a second rule', async () => {
     assert.strictEqual(hiddenOf(w).value, '/a/b/c=>/mnt/user',
         'the separators are stripped rather than splitting the rule');
     assert.strictEqual(hiddenOf(w).value.split(';').length, 1, 'still exactly one rule');
+});
+
+test('a stray remove button inside the field cannot alter this list', async () => {
+    // The handler is scoped to its own list. This pins the SCOPING CONTRACT
+    // rather than a specific symptom: with the containment test removed the
+    // observable damage here happens to be nil (wapPathMapRemove detaches the
+    // foreign row from its own parent and re-syncs from this host, which is
+    // unchanged), so this asserts the invariant that matters - a click on markup
+    // this editor does not own leaves its rows and its saved value alone.
+    const dom = build('/share=>/mnt/user; /media=>/mnt/user/media');
+    const doc = dom.window.document;
+    const foreign = doc.createElement('div');
+    foreign.innerHTML = '<div data-wap-pathmap-row=""><button data-wap-pathmap-remove="">-</button></div>';
+    doc.querySelector('[data-wap-pathmap-field]').appendChild(foreign);
+    const w = await load(dom);
+
+    const before = hiddenOf(w).value;
+    click(w, foreign.querySelector('[data-wap-pathmap-remove]'));
+    assert.strictEqual(rowsOf(w).length, 2, 'no row was removed from this list');
+    assert.strictEqual(hiddenOf(w).value, before, 'and the saved value is untouched');
+    assert.strictEqual(foreign.querySelectorAll('[data-wap-pathmap-row]').length, 1,
+        'the foreign row is left alone too - it is not this editor\'s to remove');
 });
 
 test('an empty saved value renders one blank row and stays empty', async () => {

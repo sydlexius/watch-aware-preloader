@@ -506,7 +506,7 @@ if ($wapMapRows === []) {
 ?>
 <dl>
     <dt><label for="wap_path_map_from_1">Advanced: manual path-map override</label></dt>
-    <dd>
+    <dd data-wap-pathmap-field="">
         <input type="hidden" name="PATH_MAPS" value="<?= htmlspecialchars((string) ($wapCfg['PATH_MAPS'] ?? '')) ?>">
         <div data-wap-pathmap-list="" class="wap-pathmap">
         <?php foreach ($wapMapRows as $wapI => $wapRow) { ?>
