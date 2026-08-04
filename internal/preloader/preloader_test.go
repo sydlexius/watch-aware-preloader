@@ -1,9 +1,11 @@
 package preloader
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +67,80 @@ func TestHeadBytesDurationBased(t *testing.T) {
 	}
 }
 
+func TestPlanHeadReportsTruncation(t *testing.T) {
+	cfg := testCfg() // 20s target, 250 MiB clamp
+
+	// Below the crossover the request is honored in full and nothing is lost.
+	within := PlanHead(cfg, core.MediaItem{BitrateBps: 60_000_000})
+	if within.Truncated {
+		t.Error("Truncated = true at 60 Mbps, which fits inside the clamp")
+	}
+	if within.CoveredSeconds < 19.9 || within.CoveredSeconds > 20.1 {
+		t.Errorf("CoveredSeconds = %.2f, want the configured 20s", within.CoveredSeconds)
+	}
+
+	// Above it the clamp overrides the duration. This is the case #112 exists
+	// for: the operator asked for 20s and gets less, with nothing to say so.
+	over := PlanHead(cfg, core.MediaItem{BitrateBps: 128_000_000})
+	if !over.Truncated {
+		t.Fatal("Truncated = false at 128 Mbps, where 250 MiB cannot hold 20s")
+	}
+	if over.Bytes != cfg.MaxHeadBytes {
+		t.Errorf("Bytes = %d, want the clamp %d", over.Bytes, cfg.MaxHeadBytes)
+	}
+	// 250 MiB at 128 Mbps is about 16.4s - materially short of 20s, and short of
+	// the ~9.9s worst-case spin-up plus seek and transfer margin (#5).
+	if over.CoveredSeconds > 17 || over.CoveredSeconds < 16 {
+		t.Errorf("CoveredSeconds = %.2f, want about 16.4", over.CoveredSeconds)
+	}
+
+	// Raising target_seconds must NOT change a truncated result - that is the
+	// property that makes the dial misleading, so it is pinned rather than
+	// assumed.
+	cfg30 := cfg
+	cfg30.TargetSeconds = 30
+	if got := PlanHead(cfg30, core.MediaItem{BitrateBps: 128_000_000}); got.Bytes != over.Bytes {
+		t.Errorf("raising target_seconds changed a clamped head: %d -> %d", over.Bytes, got.Bytes)
+	}
+}
+
+func TestPlanHeadFloorIsNotTruncation(t *testing.T) {
+	// MinHeadBytes raising a small request grants MORE coverage than asked for.
+	// Reporting that as truncation would cry wolf on every low-bitrate item.
+	got := PlanHead(testCfg(), core.MediaItem{BitrateBps: 1_000_000})
+	if got.Truncated {
+		t.Error("Truncated = true when the floor raised the head; nothing was lost")
+	}
+	if got.CoveredSeconds < 20 {
+		t.Errorf("CoveredSeconds = %.2f, want at least the 20s target", got.CoveredSeconds)
+	}
+}
+
+func TestPlanHeadUnknownBitrateReportsNoFalseTruncation(t *testing.T) {
+	// No bitrate and no runtime: the head falls to the floor and CoveredSeconds
+	// is unknowable. It must not claim a truncation it cannot substantiate.
+	got := PlanHead(testCfg(), core.MediaItem{})
+	if got.Truncated {
+		t.Error("Truncated = true for an item with no bitrate to measure against")
+	}
+	if got.Bytes != testCfg().MinHeadBytes {
+		t.Errorf("Bytes = %d, want the floor", got.Bytes)
+	}
+}
+
+func TestHeadBytesMatchesPlanHead(t *testing.T) {
+	// HeadBytes is kept as the thin wrapper both callers already use; if the two
+	// ever diverge the estimate and the preloader would disagree about the same
+	// item, which is how a budget meter starts lying.
+	cfg := testCfg()
+	for _, bps := range []int64{0, 1_000_000, 25_000_000, 60_000_000, 128_000_000} {
+		it := core.MediaItem{BitrateBps: bps}
+		if HeadBytes(cfg, it) != PlanHead(cfg, it).Bytes {
+			t.Errorf("HeadBytes and PlanHead disagree at %d bps", bps)
+		}
+	}
+}
+
 func TestHeadBytesClampsLow(t *testing.T) {
 	it := core.MediaItem{BitrateBps: 1_000_000} // 20s = 2.5MB < 8MB floor
 	if got := HeadBytes(testCfg(), it); got != 8<<20 {
@@ -80,6 +156,54 @@ func TestHeadBytesFallbackToSizeOverRuntime(t *testing.T) {
 	got := HeadBytes(cfg, it)
 	if got <= cfg.MinHeadBytes {
 		t.Fatalf("HeadBytes = %d, want strictly > MinHeadBytes (%d); fallback may be clamping to floor", got, cfg.MinHeadBytes)
+	}
+}
+
+func TestTruncationReachesTheLogDuringASweep(t *testing.T) {
+	// The point of #112 is that the operator can SEE the truncation. A struct
+	// field nobody prints would fix nothing, so this drives a real sweep and
+	// asserts the warning reaches a real handler.
+	var buf bytes.Buffer
+	cache := &fakeCache{resident: -1}
+	fs := fakeFS{"/mnt/user/TV/peak.mkv": 40 << 30}
+	p := New(testCfg(), cache, pathmap.New(nil), fs,
+		slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	// 128 Mbps: 20s wants ~320 MiB, past the 250 MiB clamp.
+	targets := []core.PreloadTarget{
+		{Item: core.MediaItem{ID: "peak", ServerPath: "/mnt/user/TV/peak.mkv", BitrateBps: 128_000_000}, Tier: core.TierNextUp},
+	}
+	p.Run(context.Background(), targets, 1<<40)
+
+	out := buf.String()
+	if !strings.Contains(out, "head truncated by max_head_mb") {
+		t.Fatalf("truncation was not logged; output was:\n%s", out)
+	}
+	// The numbers are what make it actionable - "truncated" alone does not say
+	// by how much, and the operator needs that to judge raising max_head_mb.
+	if !strings.Contains(out, "covered_seconds=16") {
+		t.Errorf("log omits the actual coverage; output was:\n%s", out)
+	}
+	if !strings.Contains(out, "target_seconds=20") {
+		t.Errorf("log omits the requested target; output was:\n%s", out)
+	}
+}
+
+func TestNoTruncationWarningWhenTheHeadFits(t *testing.T) {
+	// Warning on every item would train the operator to ignore it.
+	var buf bytes.Buffer
+	cache := &fakeCache{resident: -1}
+	fs := fakeFS{"/mnt/user/TV/hd.mkv": 8 << 30}
+	p := New(testCfg(), cache, pathmap.New(nil), fs,
+		slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	targets := []core.PreloadTarget{
+		{Item: core.MediaItem{ID: "hd", ServerPath: "/mnt/user/TV/hd.mkv", BitrateBps: 25_000_000}, Tier: core.TierNextUp},
+	}
+	p.Run(context.Background(), targets, 1<<40)
+
+	if strings.Contains(buf.String(), "head truncated") {
+		t.Errorf("warned on an item that fits inside the clamp:\n%s", buf.String())
 	}
 }
 
