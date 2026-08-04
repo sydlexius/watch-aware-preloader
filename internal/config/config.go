@@ -280,12 +280,20 @@ func (c *Config) applyDefaults(orderDefined bool, legacyEnabled map[core.Tier]bo
 //     asking for the others, and reading it permissively would pull unrequested
 //     media into a finite page-cache budget.
 //   - Otherwise (only `enabled = false` stated) it is a DENY-LIST: the default
-//     order minus the stated tiers, since an absent flag keeps the pre-dials
-//     default (on).
+//     order minus the stated tiers. This DEPARTS from the pre-order loader on
+//     purpose. That loader defaulted every tier to on only when [tiers] was
+//     absent entirely (`applyDefaults(md.IsDefined("tiers"))`); once the block
+//     existed it used the decoded struct verbatim, so an unstated `enabled`
+//     decoded to the zero value false. A config saying only
+//     `[tiers.recently_added] enabled = false` therefore used to warm NOTHING,
+//     because two unrelated keys happened to be absent. Warming the other two is
+//     what an operator writing that stanza means, so the deny-list reading is
+//     the intended behavior change, not a preserved one.
 //   - No flag at all: the full default order.
 //
 // A config stating every flag (what rc.preloadd always renders) resolves the
-// same under either reading, so the plugin-rendered shape is unaffected.
+// same under either reading, so the plugin-rendered shape is unaffected and the
+// departure above is reachable only from a hand-edited config.toml.
 func deriveLegacyOrder(legacyEnabled map[core.Tier]bool) TierOrder {
 	if len(legacyEnabled) == 0 {
 		return DefaultTierOrder()
