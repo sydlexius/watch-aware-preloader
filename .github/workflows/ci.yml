@@ -101,6 +101,14 @@ jobs:
           tools: composer
           coverage: none
       - run: composer install --no-interaction --no-progress
+      # Pin Node rather than inheriting whatever the runner image ships, so the
+      # JS lint and DOM tests run against a known version.
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: "24"
+      - run: npm ci
+      - name: JS lint (ESLint)
+        run: npx eslint .
       - name: PHPStan + PHP-CS-Fixer (skips cleanly until plugin/ or src/ has PHP)
         run: |
           if find plugin src -type f \( -name '*.php' -o -name '*.page' \) | grep -q .; then
@@ -130,11 +138,22 @@ jobs:
           shopt -s nullglob
           found=0
           for t in test/*_test.js; do
+            case "$t" in *_dom_test.js) continue ;; esac   # node:test suites run below
             found=1
             echo "== $t =="
             node "$t"
           done
           [ "$found" -eq 1 ] || echo "no JS test scripts yet - skipping"
+      - name: JS DOM tests (test/*_dom_test.js, jsdom)
+        run: |
+          shopt -s nullglob
+          found=0
+          for t in test/*_dom_test.js; do
+            found=1
+            echo "== $t =="
+            node --test "$t"
+          done
+          [ "$found" -eq 1 ] || echo "no JS DOM test suites yet - skipping"
 
   shell-smoke:
     name: Install-by-URL Smoke

@@ -28,7 +28,7 @@ function wapAggregate(rows, budgetBytes, sel) {
     const key = r.u + '|' + r.t;
     (buckets[key] || (buckets[key] = [])).push(r);
   }
-  let capped = [];
+  const capped = [];
   for (const key in buckets) {
     const g = buckets[key].sort(function (a, b) { return a.r - b.r; });
     const tier = key.split('|')[1];
@@ -73,7 +73,7 @@ if (typeof module !== 'undefined' && module.exports) {
 // --- DOM layer (browser only) -------------------------------------------------
 // Reads the embedded estimate island + live form state, repaints #wap-meter on
 // every control change. The control tier keys map to the estimate tier tokens.
-var WAP_TIER_KEYS = { RESUME: 'resume', NEXTUP: 'next-up', RECENT: 'recently-added' };
+const WAP_TIER_KEYS = { RESUME: 'resume', NEXTUP: 'next-up', RECENT: 'recently-added' };
 
 // wapSelectionSet reads the current selection for USERS[]/LIBRARIES[]. When the
 // checkbox group is rendered (pickers available), it returns the checked values
@@ -81,13 +81,13 @@ var WAP_TIER_KEYS = { RESUME: 'resume', NEXTUP: 'next-up', RECENT: 'recently-add
 // Test connection yet), the page emits a hidden scalar CSV of the SAVED selection
 // instead; fall back to that so a saved narrowed selection is not misread as "all".
 function wapSelectionSet(checkboxName, scalarName) {
-  var set = new Set();
-  var boxes = document.querySelectorAll('input[name="' + checkboxName + '"]');
+  const set = new Set();
+  const boxes = document.querySelectorAll('input[name="' + checkboxName + '"]');
   if (boxes.length > 0) {
-    for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) { set.add(boxes[i].value); } }
+    for (let i = 0; i < boxes.length; i++) { if (boxes[i].checked) { set.add(boxes[i].value); } }
     return set;
   }
-  var scalar = document.querySelector('input[name="' + scalarName + '"]');
+  const scalar = document.querySelector('input[name="' + scalarName + '"]');
   if (scalar && scalar.value) {
     scalar.value.split(',').forEach(function (v) { v = v.trim(); if (v) { set.add(v); } });
   }
@@ -95,10 +95,10 @@ function wapSelectionSet(checkboxName, scalarName) {
 }
 
 function wapReadSelection() {
-  var tiers = {};
+  const tiers = {};
   Object.keys(WAP_TIER_KEYS).forEach(function (k) {
-    var en = document.querySelector('input[name="TIER_' + k + '_ENABLED"]');
-    var mx = document.querySelector('input[name="TIER_' + k + '_MAX"]');
+    const en = document.querySelector('input[name="TIER_' + k + '_ENABLED"]');
+    const mx = document.querySelector('input[name="TIER_' + k + '_MAX"]');
     tiers[WAP_TIER_KEYS[k]] = {
       enabled: en ? en.checked : true,
       max: mx ? (parseInt(mx.value, 10) || 0) : 0,
@@ -112,9 +112,9 @@ function wapReadSelection() {
 // sizing, which only the Go engine can recompute - so a change makes the shown
 // projection stale until "Estimate budget" is clicked again.
 function wapEstimateStale(est) {
-  var meta = est.meta || {};
-  var ramEl = document.querySelector('input[name="RAM_PERCENT"]');
-  var tgtEl = document.querySelector('input[name="TARGET_SECONDS"]');
+  const meta = est.meta || {};
+  const ramEl = document.querySelector('input[name="RAM_PERCENT"]');
+  const tgtEl = document.querySelector('input[name="TARGET_SECONDS"]');
   if (ramEl && meta.ram_percent != null && parseInt(ramEl.value, 10) !== meta.ram_percent) { return true; }
   if (tgtEl && meta.target_seconds != null && parseInt(tgtEl.value, 10) !== meta.target_seconds) { return true; }
   return false;
@@ -124,24 +124,24 @@ function wapFmtGiB(bytes) { return (bytes / 1073741824).toFixed(1) + ' GiB'; }
 
 // wapTierLabel maps a tier token to its display label (matching the settings
 // page's tier names). Falls back to the raw token for an unknown tier.
-var WAP_TIER_LABELS = { resume: 'Resume', 'next-up': 'Next-up', 'recently-added': 'Recently added' };
+const WAP_TIER_LABELS = { resume: 'Resume', 'next-up': 'Next-up', 'recently-added': 'Recently added' };
 function wapTierLabel(t) { return WAP_TIER_LABELS[t] || t; }
 
 function wapPaint(est) {
-  var meter = document.getElementById('wap-meter');
+  const meter = document.getElementById('wap-meter');
   if (!meter) { return; }
   // budget_bytes can be 0 if the engine could not read available RAM. Treat that
   // as "budget unavailable": show projected bytes only, no percentage/over/drops.
-  var hasBudget = est.budget_bytes > 0;
-  var rows = Array.isArray(est.rows) ? est.rows : [];
-  var a = wapAggregate(rows, est.budget_bytes || 0, wapReadSelection());
-  var pct = hasBudget ? (a.projected / est.budget_bytes) * 100 : 0;
-  var over = hasBudget && a.over;
-  var state = !hasBudget ? 'ok' : (pct > 100 ? 'over' : (pct > 90 ? 'caution' : 'ok'));
-  var bar = meter.querySelector('.wap-bar-fill');
+  const hasBudget = est.budget_bytes > 0;
+  const rows = Array.isArray(est.rows) ? est.rows : [];
+  const a = wapAggregate(rows, est.budget_bytes || 0, wapReadSelection());
+  const pct = hasBudget ? (a.projected / est.budget_bytes) * 100 : 0;
+  const over = hasBudget && a.over;
+  const state = !hasBudget ? 'ok' : (pct > 100 ? 'over' : (pct > 90 ? 'caution' : 'ok'));
+  const bar = meter.querySelector('.wap-bar-fill');
   bar.style.width = Math.min(pct, 100).toFixed(1) + '%';
   meter.setAttribute('data-state', state);
-  var line = wapFmtGiB(a.projected) + ' projected';
+  let line = wapFmtGiB(a.projected) + ' projected';
   if (hasBudget) {
     line += ' of ' + wapFmtGiB(est.budget_bytes) + ' budget';
     if (over) { line += ' (over by ' + wapFmtGiB(a.projected - est.budget_bytes) + ')'; }
@@ -150,17 +150,17 @@ function wapPaint(est) {
   }
   meter.querySelector('.wap-meter-text').textContent = line;
 
-  var drop = meter.querySelector('.wap-drop');
+  const drop = meter.querySelector('.wap-drop');
   if (over && a.dropCount > 0) {
-    var parts = Object.keys(a.dropByTier).map(function (t) { return wapTierLabel(t) + ' ' + a.dropByTier[t]; });
-    var noun = a.dropCount === 1 ? ' item' : ' items';
+    const parts = Object.keys(a.dropByTier).map(function (t) { return wapTierLabel(t) + ' ' + a.dropByTier[t]; });
+    const noun = a.dropCount === 1 ? ' item' : ' items';
     drop.textContent = a.dropCount + noun + " past the cutline won't warm - " + parts.join(', ');
     drop.style.display = '';
   } else {
     drop.style.display = 'none';
   }
 
-  var staleEl = meter.querySelector('.wap-stale');
+  const staleEl = meter.querySelector('.wap-stale');
   if (staleEl) {
     if (wapEstimateStale(est)) {
       staleEl.textContent = 'RAM budget or target seconds changed since this estimate - click Estimate budget to refresh.';
@@ -172,19 +172,19 @@ function wapPaint(est) {
 }
 
 function wapInitMeter() {
-  var island = document.getElementById('wap-estimate');
-  var meter = document.getElementById('wap-meter');
+  const island = document.getElementById('wap-estimate');
+  const meter = document.getElementById('wap-meter');
   if (!island || !meter) { return; }
-  var est;
-  try { est = JSON.parse(island.textContent || '{}'); } catch (e) { return; }
+  let est;
+  try { est = JSON.parse(island.textContent || '{}'); } catch { return; }
   if (!est || !Array.isArray(est.rows)) { return; }
-  var repaint = function () { wapPaint(est); };
-  var inputs = document.querySelectorAll(
+  const repaint = function () { wapPaint(est); };
+  const inputs = document.querySelectorAll(
     'input[name="USERS[]"], input[name="LIBRARIES[]"], ' +
     'input[name^="TIER_"][name$="_ENABLED"], input[name^="TIER_"][name$="_MAX"], ' +
     'input[name="RAM_PERCENT"], input[name="TARGET_SECONDS"]'
   );
-  for (var i = 0; i < inputs.length; i++) {
+  for (let i = 0; i < inputs.length; i++) {
     inputs[i].addEventListener('change', repaint);
     inputs[i].addEventListener('input', repaint);
   }
