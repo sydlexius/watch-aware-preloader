@@ -49,7 +49,18 @@ over a supervised service to avoid init-script/restart/update complexity.
 
 ## Architecture (target)
 
-Five decoupled units inside the `preloadd` binary:
+The load-bearing units inside the `preloadd` binary. This is a map of the main
+seams, not an inventory - `internal/` also holds `app` (sweep orchestration),
+`core`, `pagecache`, `estimate`, `libscope`, `container`, `secrets`, and
+`sysinfo`. Run `ls internal/` for the full list rather than trusting this block
+to be exhaustive.
+
+There is deliberately NO warm-set ledger: whether a range is already warm is
+decided per sweep by probing residency (mincore, or a read-timing probe on
+FUSE), not by remembering what a previous run warmed. An earlier version of this
+section listed a ledger under `internal/config`; it was never built, and the
+absence is what makes an external `drop_caches` re-warm correctly instead of
+being masked by stale bookkeeping.
 
 ```
 cmd/preloadd/        - entry point + run modes (-once default, --daemon, -verify)
@@ -59,7 +70,8 @@ internal/scorer/      - pure: per-user signals -> ranked, deduped []PreloadTarge
 internal/preloader/   - duration-based head/tail/resume-offset reads into page
                         cache; mincore warm-detection; byte-budget accounting
 internal/pathmap/     - server path -> host path (docker inspect auto-detect)
-internal/config/      - TOML config + warm-set ledger
+internal/config/      - TOML config
+internal/status/      - status.json for the settings page (aggregate run counts)
 plugin/               - Phase 2: Unraid .plg tree (PHP settings page, rc.d, events)
 ```
 
