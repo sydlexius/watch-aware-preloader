@@ -103,7 +103,11 @@ type HeadPlan struct {
 	// Bytes is the head size to warm.
 	Bytes int64
 	// CoveredSeconds is how much playback Bytes actually covers at this item's
-	// bitrate. Equal to the configured target unless Truncated.
+	// bitrate. It equals the configured target in the ordinary case, but is
+	// LARGER when MinHeadBytes raised a small request, SMALLER when Truncated,
+	// and falls back to the configured target when the bitrate is unknown -
+	// there is nothing to divide by, so it is the request rather than a
+	// measurement. Read it as "what this head buys", not "what was asked for".
 	CoveredSeconds float64
 	// Truncated reports that MaxHeadBytes cut the request short.
 	Truncated bool
@@ -115,7 +119,8 @@ func HeadBytes(cfg Config, it core.MediaItem) int64 {
 }
 
 // PlanHead sizes an item's head read and reports whether the byte clamp
-// overrode the requested duration.
+// overrode the requested duration. See HeadPlan.CoveredSeconds for the cases
+// where the coverage differs from the configured target in either direction.
 func PlanHead(cfg Config, it core.MediaItem) HeadPlan {
 	bps := it.BitrateBps
 	if bps <= 0 && it.Runtime > 0 {
