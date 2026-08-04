@@ -206,6 +206,297 @@ bash "$RC" render
 awk '/^\[tiers.next_up\]$/{f=1;next} f&&/^enabled = /{print;exit}' "$cfg" | grep -q 'enabled = false' || fail "next_up not disabled"
 awk '/^\[tiers.resume\]$/{f=1;next} f&&/^max_items = /{print;exit}' "$cfg" | grep -q 'max_items = 15' || fail "resume max not 15"
 
+# --- tiers: [tiers] order and [tiers.override] (per-user tier priority) ---
+# The override block is scoped out of the file before asserting: a bare id also
+# appears in [users] enabled, so an unscoped grep would assert nothing.
+override_block() {
+    awk '/^\[tiers\.override\]$/{f=1;next} f&&/^\[/{f=0} f' "$cfg"
+}
+
+# TIER_ORDER absent: derive the order from the legacy *_ENABLED flags,
+# preserving pre-order semantics exactly.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+TIER_RESUME_ENABLED="1"
+TIER_NEXTUP_ENABLED="0"
+TIER_RECENT_ENABLED="1"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = ["resume", "recent"]'
+
+# [tiers] order must precede the [tiers.<tier>] sub-tables: TOML binds a bare
+# key/value pair to the most recent table header, so an order emitted after
+# [tiers.resume] would decode as tiers.resume.order and be silently ignored.
+grep -n '^\[tiers' "$cfg" | head -n1 | grep -q '\[tiers\]$' || fail "[tiers] must be the first tiers table"
+
+# TIER_ORDER present: honored verbatim, legacy flags ignored.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+TIER_ORDER="nextup,resume"
+TIER_RESUME_ENABLED="0"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = ["nextup", "resume"]'
+
+# A per-user override emits into [tiers.override]; users without one emit
+# NOTHING (inheritance is by absence: emitting a copy of the global order would
+# freeze that user against later global edits). Cfg keys cannot hold '-', so the
+# page writes TIER_ORDER_<id with '-' as '_'>, but the emitted TOML key must be
+# the ORIGINAL dashed id - that is what the engine matches MediaItem.UserID on.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a,id-b"
+TIER_ORDER="resume,nextup"
+TIER_ORDER_id_b="nextup"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" '[tiers.override]'
+override_block | grep -qF '"id-b" = ["nextup"]' || fail "override for id-b not emitted:\n$(override_block)"
+override_block | grep -qF 'id-a' && fail "id-a inherits by absence; must emit no override entry"
+
+# An unknown tier name in the cfg must never reach config.toml: the cfg is
+# untrusted input and an unknown tier fails the engine's config load.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+TIER_ORDER="resume,bogus,nextup"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = ["resume", "nextup"]'
+assert_not_contains "$cfg" 'bogus'
+
+# An unknown tier inside a per-user override is dropped the same way.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a"
+TIER_ORDER_id_a="bogus,recent"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qF '"id-a" = ["recent"]' || fail "unknown tier not dropped from override:\n$(override_block)"
+assert_not_contains "$cfg" 'bogus'
+
+# An empty order is legal and means "warm nothing". Only a fully ABSENT
+# TIER_ORDER key falls back to the legacy derivation.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+TIER_ORDER=""
+TIER_RESUME_ENABLED="1"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = []'
+
+# An empty per-user override is legal too and must not collapse to inheritance.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a"
+TIER_ORDER_id_a=""
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qF '"id-a" = []' || fail "empty override must render [], not inherit:\n$(override_block)"
+
+# An EMPTY users csv means "all users at equal rank" - the shipped default.cfg
+# value - and must NOT suppress per-user overrides. Discovering overrides from the
+# users csv dropped every one of them here: the settings page offers the override
+# control on every user row regardless of enrolment, so it reported the override
+# as saved while the engine never received it. The dashed id is unrecoverable in
+# this state (the page's '-' -> '_' transform is not invertible), so the key is
+# emitted in its .cfg spelling and the engine binds it back (refCfgKey).
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS=""
+TIER_ORDER="resume,nextup"
+TIER_ORDER_id_b="nextup"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" '[tiers.override]'
+override_block | grep -qF '"id_b" = ["nextup"]' ||
+    fail "an override must render with no users enrolled:\n$(override_block)"
+
+# An override for a user who is NOT enrolled still renders: enrolment and the
+# override cascade are separate dials, and the engine ignores an override that
+# binds to nobody. Suppressing it here would silently discard the operator's
+# saved choice the moment they narrowed the user list.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a"
+TIER_ORDER="resume,nextup"
+TIER_ORDER_id_b="nextup"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qF '"id_b" = ["nextup"]' ||
+    fail "an unenrolled user's override must still render:\n$(override_block)"
+
+# A duplicated tier must be deduped, not passed through. The engine's Validate
+# rejects a duplicate as hard as an unknown name, so passing them through renders
+# a config.toml the engine REFUSES to load - and render exits 0, so it fails later
+# in syslog on a cron pass, far from the edit that caused it. Covers both the
+# global order and a per-user override.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a"
+TIER_ORDER="resume,nextup,resume,recent,nextup"
+TIER_ORDER_id_a="recent,recent,resume"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = ["resume", "nextup", "recent"]'
+override_block | grep -qF '"id-a" = ["recent", "resume"]' ||
+    fail "a duplicated tier in an override must be deduped:\n$(override_block)"
+# ...and the result must actually LOAD in the engine's own validator.
+if python3 -c 'import tomllib' 2>/dev/null; then
+    python3 - "$cfg" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    d = tomllib.load(fh)
+for label, order in [("tiers.order", d["tiers"]["order"])] + \
+                    [(f"override.{k}", v) for k, v in d["tiers"].get("override", {}).items()]:
+    assert len(order) == len(set(order)), f"{label} still holds duplicates: {order}"
+print("  duplicate-tier dedupe OK (tomllib)")
+PY
+fi
+
+# A literal '_' in an id or display name must not let a '-' twin steal its
+# override. Both spellings normalize to "a_b", so a normalized-only match would
+# emit "a-b" for the key written against "a_b" and apply one user's override to
+# the other. Exact match wins, mirroring the engine's own precedence.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="a-b,a_b"
+TIER_ORDER="resume,nextup"
+TIER_ORDER_a_b="recent"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qF '"a_b" = ["recent"]' ||
+    fail "the exact-match id must win over its dash twin:\n$(override_block)"
+assert_not_contains "$cfg" '"a-b" ='
+
+# No overrides at all -> no empty [tiers.override] table.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a,id-b"
+TIER_ORDER="resume"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_not_contains "$cfg" '[tiers.override]'
+
+# A user id holding a regex metacharacter must never STEAL another user's
+# override. The cfg lookup matches its key as a regex, so "J.Smith" would match
+# the TIER_ORDER_JXSmith line: J.Smith has no key of its own and must inherit by
+# absence. Hex GUIDs cannot trigger this, but a display name can ('.' '(' '*').
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="J.Smith,JXSmith"
+TIER_ORDER_JXSmith="nextup"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qF '"JXSmith" = ["nextup"]' || fail "override for JXSmith not emitted:\n$(override_block)"
+override_block | grep -qF 'J.Smith' && fail "J.Smith has no override key; must inherit by absence, not steal JXSmith's:\n$(override_block)"
+
+# An id whose transform cannot form a .cfg key is SKIPPED, never fatal: an
+# unbalanced '[' is an invalid regex, and render must stay fail-safe (no abort,
+# no override) rather than error out mid-file.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="a[b,id-c"
+TIER_ORDER_id_c="recent"
+CFG
+rm -f "$cfg"
+bash "$RC" render || fail "render must not abort on an id that cannot form a cfg key"
+override_block | grep -qF '"id-c" = ["recent"]' || fail "override for id-c not emitted:\n$(override_block)"
+override_block | grep -qF 'a[b' && fail "an id that cannot form a cfg key must emit no override"
+
+# TWO OR MORE overrides at once: each must land on its OWN line. Building the
+# block through a command substitution strips the trailing newline and collapses
+# them onto one line as silently-invalid TOML.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a,id-b,id-c"
+TIER_ORDER="resume,nextup"
+TIER_ORDER_id_a="resume"
+TIER_ORDER_id_c="nextup,recent"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+override_block | grep -qxF '"id-a" = ["resume"]' || fail "id-a override not on its own line:\n$(override_block)"
+override_block | grep -qxF '"id-c" = ["nextup", "recent"]' || fail "id-c override not on its own line:\n$(override_block)"
+[ "$(override_block | grep -c '^"')" -eq 2 ] || fail "expected exactly 2 override lines:\n$(override_block)"
+if python3 -c 'import tomllib' 2>/dev/null; then
+    python3 - "$cfg" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    d = tomllib.load(fh)
+o = d["tiers"]["override"]
+assert o == {"id-a": ["resume"], "id-c": ["nextup", "recent"]}, o
+print("  multi-override round-trip OK (tomllib)")
+PY
+fi
+
+# The absent-key marker is internal: a cfg VALUE that happens to equal it is
+# data, not an absence. TIER_ORDER="__unset__" filters to an empty order, never
+# a fallback to the legacy derivation.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a"
+TIER_ORDER="__unset__"
+TIER_RESUME_ENABLED="1"
+TIER_ORDER_id_a="__unset__"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = []'
+override_block | grep -qF '"id-a" = []' || fail "an override value of __unset__ is data, not inheritance:\n$(override_block)"
+
+# The whole rendered file must stay valid TOML with the new tables present.
+if python3 -c 'import tomllib' 2>/dev/null; then
+    cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+USERS="id-a,id-b"
+TIER_ORDER="recent,resume"
+TIER_ORDER_id_b="nextup,resume"
+CFG
+    rm -f "$cfg"
+    bash "$RC" render
+    python3 - "$cfg" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    d = tomllib.load(fh)
+t = d["tiers"]
+assert t["order"] == ["recent", "resume"], t["order"]
+assert t["override"] == {"id-b": ["nextup", "resume"]}, t["override"]
+# The legacy dials must survive: PR A still reads them as migration input.
+assert t["resume"]["max_items"] == 0, t["resume"]
+print("  tiers order/override round-trip OK (tomllib)")
+PY
+fi
+
 # --- write-pickers: assembles pickers.json from the three read-only
 # subcommands, atomically and world-readable. ---
 STUB_BIN="$work/preloadd"

@@ -38,3 +38,17 @@ if ($clear) {
 
 // Normalize the settings fields that /update.php is about to write to the .cfg.
 wap_sanitize_settings_post($_POST);
+
+// Remove the per-user override keys the operator switched off.
+//
+// COUPLING, deliberate and load-bearing: $keys is /update.php's OWN local key
+// map, seeded from the existing .cfg BEFORE this hook is included and written
+// AFTER it returns. update.php MERGES rather than rewrites, so a key we merely
+// drop from $_POST keeps its old file value - removal is only possible by
+// reaching into $keys here. Guarded so a future update.php that renames or drops
+// that variable degrades to "cannot remove" instead of a fatal.
+if (isset($keys) && \is_array($keys)) {
+    wap_apply_override_removals($_POST, $keys);
+} else {
+    syslog(LOG_WARNING, 'watch-aware-preloader: /update.php $keys not in scope; per-user override removals skipped');
+}

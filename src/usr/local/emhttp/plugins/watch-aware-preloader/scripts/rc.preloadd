@@ -58,6 +58,28 @@ cfg_get() {
     printf '%s' "$val"
 }
 
+# cfg_has FILE KEY -> true when KEY is present, whatever its value. Tells an
+# ABSENT key from one set to an empty (or any other) value without a sentinel
+# default, which no cfg value can then collide with. KEY is a regex, as in
+# cfg_get: pass only a literal constant or a cfg_key_safe-validated key.
+cfg_has() {
+    grep -qE "^[[:space:]]*${2}=" "$1" 2>/dev/null
+}
+
+# cfg_key_safe STR -> true when STR holds only characters legal in a .cfg key
+# ([A-Za-z0-9_]). cfg_get/cfg_has match KEY as a regex, so a metacharacter in a
+# cfg-CONTROLLED key ('.' '(' '*' '+' '[' are all legal in a display name) would
+# match a DIFFERENT user's key and steal its override, or form an invalid regex.
+# An id that cannot form a .cfg key cannot have one, so callers skip it: that
+# preserves inheritance-by-absence and stays fail-safe. LC_ALL=C keeps the range
+# byte-based. The trailing sentinel protects any trailing newline and MUST sit
+# outside the delete set, or it is stripped too and every id reads as unsafe.
+cfg_key_safe() {
+    local stripped
+    stripped="$(LC_ALL=C printf '%s.' "$1" | LC_ALL=C tr -d 'A-Za-z0-9_')"
+    [ "$stripped" = "." ]
+}
+
 # toml_escape STR -> STR escaped for a TOML basic (double-quoted) string. Without
 # this, a .cfg value containing " or \ or a control char breaks config.toml and
 # the Go engine (BurntSushi/toml) refuses to parse it - triggerable by ordinary
@@ -141,6 +163,131 @@ csv_to_toml_array() {
         out="$out\"$(toml_escape "$item")\""
     done
     printf '[%s]' "$out"
+}
+
+# toml_escape_key STR -> STR as a QUOTED TOML key. Emby user ids are GUIDs and a
+# bare key would usually do, but the id reaches here from the untrusted .cfg; a
+# quoted key is valid TOML for any id and reuses the basic-string escaping.
+toml_escape_key() {
+    printf '"%s"' "$(toml_escape "$1")"
+}
+
+# tier_csv_filter CSV -> the CSV's known tier names, DEDUPED, in first-seen
+# order, comma-joined. config.toml is generated from untrusted .cfg input and the
+# engine's Validate rejects BOTH an unknown tier (at decode) and a duplicate one
+# (validateTierOrder), so dropping unknowns while passing duplicates through
+# would still render a config.toml the engine refuses to load - and render exits
+# 0, so the breakage surfaces later, per-cron, in syslog. The PHP presave mirror
+# (wap_cfg_tier_order) dedupes for the same reason; these two must agree.
+tier_csv_filter() {
+    local csv="$1" out="" item items seen=""
+    local IFS=','
+    read -ra items <<< "$csv"
+    for item in "${items[@]}"; do
+        item="$(trim "$item")"
+        case "$item" in
+            resume | nextup | recent) ;;
+            *) continue ;;
+        esac
+        case ",$seen," in
+            *",$item,"*) continue ;; # already emitted
+        esac
+        seen="$seen,$item"
+        if [ -n "$out" ]; then out="$out,"; fi
+        out="$out$item"
+    done
+    printf '%s' "$out"
+}
+
+# legacy_order_from_flags SRC -> the default order filtered to the legacy
+# *_ENABLED flags. Used only when TIER_ORDER is absent, preserving pre-order
+# semantics for a .cfg written before this feature.
+legacy_order_from_flags() {
+    local src="$1" out=""
+    if [ "$(cfg_bool "$(cfg_get "$src" TIER_RESUME_ENABLED 1)")" = "true" ]; then
+        out="resume"
+    fi
+    if [ "$(cfg_bool "$(cfg_get "$src" TIER_NEXTUP_ENABLED 1)")" = "true" ]; then
+        if [ -n "$out" ]; then out="$out,"; fi
+        out="${out}nextup"
+    fi
+    if [ "$(cfg_bool "$(cfg_get "$src" TIER_RECENT_ENABLED 1)")" = "true" ]; then
+        if [ -n "$out" ]; then out="$out,"; fi
+        out="${out}recent"
+    fi
+    printf '%s' "$out"
+}
+
+# cfg_override_key_ids FILE -> the <id> suffix of every TIER_ORDER_<id> key in
+# FILE, one per line, in file order, deduped.
+#
+# Overrides are discovered from the .cfg's OWN keys, never from the enabled-users
+# csv: an empty USERS means "all users" (the shipped default.cfg value), so
+# iterating that csv rendered NO overrides at all and silently dropped every one
+# the operator had saved. The suffix pattern is strict ([A-Za-z0-9_]) so a key
+# this emits is always safe to feed back to cfg_get as a regex, and the bare
+# global TIER_ORDER (no suffix) cannot match.
+cfg_override_key_ids() {
+    sed -n 's/^[[:space:]]*TIER_ORDER_\([A-Za-z0-9_][A-Za-z0-9_]*\)=.*/\1/p' "$1" 2>/dev/null |
+        awk '!seen[$0]++'
+}
+
+# override_id_for_key SUFFIX USERS_CSV -> the ORIGINAL user id whose
+# dash-to-underscore transform equals SUFFIX, or SUFFIX unchanged when the csv
+# does not hold it.
+#
+# The csv is only a HINT for recovering the dashed spelling, never the source of
+# truth for WHICH overrides exist: the transform the settings page applies when
+# naming the field is not invertible, so a dashed id is recoverable only while
+# the user is named in the enabled list. When it is not, the underscored suffix
+# is emitted as-is and the engine binds it back to the dashed id
+# (app.resolveUserKey's refCfgKey tier normalizes both sides, and refuses a
+# normalized collision rather than guessing).
+# Precedence mirrors the engine's (exact match beats a normalized one): an id or
+# display name may itself contain '_', so a normalized-only comparison would let
+# "a-b" claim the override written for a user literally named "a_b". Exact wins.
+override_id_for_key() {
+    local suffix="$1" csv="$2" id ids
+    local IFS=','
+    read -ra ids <<< "$csv"
+    for id in "${ids[@]}"; do
+        [ "$(trim "$id")" = "$suffix" ] || continue
+        printf '%s' "$suffix" # already the .cfg spelling; emit as-is
+        return 0
+    done
+    for id in "${ids[@]}"; do
+        id="$(trim "$id")"
+        [ -z "$id" ] && continue
+        if [ "$(printf '%s' "$id" | tr '-' '_')" = "$suffix" ]; then
+            printf '%s' "$id"
+            return 0
+        fi
+    done
+    printf '%s' "$suffix"
+}
+
+# render_tier_overrides SRC USERS_CSV -> the [tiers.override] block, or empty.
+# A user with no TIER_ORDER_<id> key emits NOTHING: inheritance is by ABSENCE,
+# and emitting a copy of the global order would freeze that user against later
+# edits to it. An override present but EMPTY is a real choice ("warm nothing for
+# this user") and renders [] - which is why presence comes from the key existing
+# at all, never from its value being non-empty.
+render_tier_overrides() {
+    local src="$1" users="$2" out="" key_id emit val
+    while IFS= read -r key_id; do
+        [ -z "$key_id" ] && continue
+        # Belt-and-braces: the enumeration pattern already guarantees this, but
+        # the suffix is about to be interpolated into a regex.
+        cfg_key_safe "$key_id" || continue
+        val="$(cfg_get "$src" "TIER_ORDER_${key_id}" "")"
+        val="$(tier_csv_filter "$val")"
+        emit="$(override_id_for_key "$key_id" "$users")"
+        # Append the newline outside the substitution: $( ) strips trailing
+        # newlines, which would run every entry onto one line.
+        out="${out}$(toml_escape_key "$emit") = $(csv_to_toml_array "$val")"$'\n'
+    done < <(cfg_override_key_ids "$src")
+    [ -z "$out" ] && return 0
+    printf '[tiers.override]\n%s' "$out"
 }
 
 # render_path_maps "/a=>/b; /c=>/d" -> repeated [[path_map]] TOML blocks
@@ -256,6 +403,17 @@ render() {
     tc_en="$(cfg_bool "$(cfg_get "$src" TIER_RECENT_ENABLED 1)")"
     tc_max="$(num_or "$(cfg_get "$src" TIER_RECENT_MAX 0)" 0)"
 
+    # An ABSENT TIER_ORDER means a pre-feature .cfg: derive the order from the
+    # legacy flags so behavior is unchanged. An EMPTY TIER_ORDER is an explicit
+    # "warm nothing" and must render [], so presence is tested apart from value.
+    local order_csv overrides_toml
+    if cfg_has "$src" TIER_ORDER; then
+        order_csv="$(tier_csv_filter "$(cfg_get "$src" TIER_ORDER "")")"
+    else
+        order_csv="$(legacy_order_from_flags "$src")"
+    fi
+    overrides_toml="$(render_tier_overrides "$src" "$users")"
+
     # Escape string scalars for their TOML basic strings; validate numerics
     # (rendered unquoted) so neither can inject into config.toml.
     server_type="$(toml_escape "$server_type")"
@@ -290,6 +448,9 @@ enabled = ${users_toml}
 [libraries]
 enabled = ${libraries_toml}
 
+[tiers]
+order = $(csv_to_toml_array "$order_csv")
+
 [tiers.resume]
 enabled = ${tr_en}
 max_items = ${tr_max}
@@ -302,6 +463,7 @@ max_items = ${tn_max}
 enabled = ${tc_en}
 max_items = ${tc_max}
 
+${overrides_toml}
 [preload]
 ram_percent = ${ram}
 target_seconds = ${target}
