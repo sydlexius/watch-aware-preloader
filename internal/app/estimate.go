@@ -31,6 +31,26 @@ const estimateResumeFrontBytes = 16 << 20
 // actually warm. Surfacing the truncation in the estimate payload would need an
 // estimate.json schema bump in lock step with the PHP reader, so it is left to
 // the change that decides what the UI should do about it.
+//
+// Pool-resident sizing (#113) is deliberately NOT mirrored here. That
+// optimisation lives on the Preloader method path, so once it is wired the
+// projection over-estimates every pool-resident item. Teaching the projection
+// about placement would mean one stat on the union path plus up to one per
+// member PER TARGET, breaking this function's whole no-disk-I/O contract. The
+// projection already errs high on purpose (see estimateResumeFrontBytes), and
+// over-projecting a pool item errs the same safe way: the meter warns before
+// the budget is actually blown. Do not "fix" this into resolving placement.
+//
+// The divergence is larger than the resume-front analogy above suggests: a
+// pool item's real sized head is preloader.MinHeadBytes (8 MiB default), while
+// this projection can charge up to preloader.MaxHeadBytes (250 MiB default) for
+// the same item - up to roughly 30x over the real cost, not the flat 16 MiB
+// gap the resume allowance adds. This is not a corner case: per
+// docs/private/phase1-verification.md the maintainer's RecentlyAdded tier
+// lives on the SSD cache pool, so pool residency is the common case for that
+// tier, and the budget bar is user-facing. The gap is deliberate, but NO issue
+// owns surfacing it in the budget meter yet, so a reader who trips over it is
+// not duplicating tracked work by opening one.
 func projectBytes(cfg preloader.Config, it core.MediaItem, tier core.Tier) int64 {
 	b := preloader.HeadBytes(cfg, it) + cfg.TailBytes
 	if tier == core.TierResume {

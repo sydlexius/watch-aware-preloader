@@ -222,3 +222,175 @@ func TestDiscoverOnAHostWithNoMntReportsTheError(t *testing.T) {
 		t.Error("want an error listing a nonexistent mount root")
 	}
 }
+
+// poolResolver builds a Resolver whose union root is the temp tree's, so the
+// public IsPool predicate can be exercised at its real signature rather than
+// through the unexported resolveUnder seam.
+func (tr tree) poolResolver(members ...string) *Resolver {
+	full := make([]string, len(members))
+	for i, m := range members {
+		full[i] = filepath.Join(tr.root, m)
+	}
+	return New(OS, full, WithUnionRoot(tr.union))
+}
+
+func TestIsPoolPredicateTrueOnAPool(t *testing.T) {
+	tr := newTree(t)
+	tr.place(t, "cache", "Media/b.mkv", "x")
+	r := tr.poolResolver("disk1", "cache")
+
+	if !r.IsPool(filepath.Join(tr.union, "Media/b.mkv")) {
+		t.Error("IsPool = false for a pool-resident file, want true")
+	}
+}
+
+func TestIsPoolPredicateFalseOnAnArrayDisk(t *testing.T) {
+	// The direction that matters most: sizing down an array-resident file
+	// reintroduces the spin-up stall this project exists to remove.
+	tr := newTree(t)
+	tr.place(t, "disk2", "Media/a.mkv", "x")
+	r := tr.poolResolver("disk1", "disk2", "cache")
+
+	if r.IsPool(filepath.Join(tr.union, "Media/a.mkv")) {
+		t.Error("IsPool = true for an array-resident file, want false")
+	}
+}
+
+func TestIsPoolPredicateFalseOnUncertainty(t *testing.T) {
+	// Every error collapses to false, because false means "size for the array"
+	// and that is the safe answer for all of them.
+	tr := newTree(t)
+	tr.place(t, "disk1", "Media/a.mkv", "x")
+	r := tr.poolResolver("disk2") // told about a member that does not hold it
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"unresolved", filepath.Join(tr.union, "Media/a.mkv")},
+		{"absent", filepath.Join(tr.union, "Media/gone.mkv")},
+		{"not a union path", filepath.Join(tr.root, "disk1", "Media/a.mkv")},
+		{"empty", ""},
+	} {
+		if r.IsPool(tc.path) {
+			t.Errorf("%s: IsPool = true, want false", tc.name)
+		}
+	}
+}
+
+// countingFS wraps a real FS and records every path passed to Stat, so a test
+// can assert which members were (and were not) probed.
+type countingFS struct {
+	FS
+	stats []string
+}
+
+func (c *countingFS) Stat(name string) (os.FileInfo, error) {
+	c.stats = append(c.stats, name)
+	return c.FS.Stat(name)
+}
+
+func (c *countingFS) statted(path string) bool {
+	for _, s := range c.stats {
+		if s == path {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIsPoolDoesNotStatArrayMembers(t *testing.T) {
+	// The spin-up hazard this guards against: a stat against an array member
+	// that does NOT hold the file is a negative lookup, and on a dentry-cache
+	// miss that can force the disk to spin up - exactly the cost this plugin
+	// exists to remove. IsPool must never touch array members at all.
+	tr := newTree(t)
+	tr.place(t, "cache", "Media/b.mkv", "x")
+	cfs := &countingFS{FS: OS}
+	r := New(cfs, []string{
+		filepath.Join(tr.root, "disk1"),
+		filepath.Join(tr.root, "disk2"),
+		filepath.Join(tr.root, "disk3"),
+		filepath.Join(tr.root, "cache"),
+	}, WithUnionRoot(tr.union))
+
+	if !r.IsPool(filepath.Join(tr.union, "Media/b.mkv")) {
+		t.Fatal("IsPool = false for a pool-resident file, want true")
+	}
+
+	for _, m := range []string{"disk1", "disk2", "disk3"} {
+		want := filepath.Join(tr.root, m, "Media/b.mkv")
+		if cfs.statted(want) {
+			t.Errorf("IsPool statted array member path %q, want array members never probed", want)
+		}
+	}
+	wantPool := filepath.Join(tr.root, "cache", "Media/b.mkv")
+	if !cfs.statted(wantPool) {
+		t.Errorf("IsPool never statted the pool member path %q", wantPool)
+	}
+}
+
+func TestIsPoolDoesNotStatArrayMembersForAnArrayResidentFile(t *testing.T) {
+	// Same guarantee on the false-answer path: a file that is actually on an
+	// array disk must still resolve to false without the array ever being
+	// probed by IsPool (Resolve, used elsewhere, is unaffected).
+	tr := newTree(t)
+	tr.place(t, "disk2", "Media/a.mkv", "x")
+	cfs := &countingFS{FS: OS}
+	r := New(cfs, []string{
+		filepath.Join(tr.root, "disk1"),
+		filepath.Join(tr.root, "disk2"),
+		filepath.Join(tr.root, "disk3"),
+		filepath.Join(tr.root, "cache"),
+	}, WithUnionRoot(tr.union))
+
+	if r.IsPool(filepath.Join(tr.union, "Media/a.mkv")) {
+		t.Fatal("IsPool = true for an array-resident file, want false")
+	}
+
+	for _, m := range []string{"disk1", "disk2", "disk3"} {
+		want := filepath.Join(tr.root, m, "Media/a.mkv")
+		if cfs.statted(want) {
+			t.Errorf("IsPool statted array member path %q, want array members never probed", want)
+		}
+	}
+}
+
+func TestResolveStillProbesAllMembers(t *testing.T) {
+	// The narrowing lives entirely inside IsPool; Resolve must keep behaving
+	// exactly as before, including probing array members when that is what a
+	// caller genuinely needs (which member holds the file).
+	tr := newTree(t)
+	tr.place(t, "disk2", "Media/a.mkv", "x")
+	cfs := &countingFS{FS: OS}
+	r := New(cfs, []string{
+		filepath.Join(tr.root, "disk1"),
+		filepath.Join(tr.root, "disk2"),
+		filepath.Join(tr.root, "disk3"),
+	}, WithUnionRoot(tr.union))
+
+	got, err := r.Resolve(filepath.Join(tr.union, "Media/a.mkv"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if want := filepath.Join(tr.root, "disk2"); got.Member != want {
+		t.Errorf("Member = %q, want %q", got.Member, want)
+	}
+	// disk1 is searched before disk2, so Resolve's ordinary probe order must
+	// still reach it.
+	want := filepath.Join(tr.root, "disk1", "Media/a.mkv")
+	if !cfs.statted(want) {
+		t.Errorf("Resolve did not stat array member path %q; narrowing must not affect Resolve", want)
+	}
+}
+
+func TestIsPoolPredicateFalseWithNoMembers(t *testing.T) {
+	// The non-Unraid shape: discovery found nothing, so nothing resolves.
+	tr := newTree(t)
+	tr.place(t, "cache", "Media/b.mkv", "x")
+	r := tr.poolResolver()
+
+	if r.IsPool(filepath.Join(tr.union, "Media/b.mkv")) {
+		t.Error("IsPool = true with no members, want false")
+	}
+}
