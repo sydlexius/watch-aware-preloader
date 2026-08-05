@@ -230,7 +230,7 @@ if ($wapEstimate !== null) {
      * other script tags at the end of the page. meter.js is useless without
      * #wap-estimate and #wap-estimate is inert without meter.js, so the two
      * belong in one place: separating them is what let the include go missing
-     * for three releases (#121). The status branch below is deliberately
+     * unnoticed once already (#121). The status branch below is deliberately
      * server-rendered and loads no JavaScript at all.
      */
     ?>
