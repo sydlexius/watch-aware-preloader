@@ -12,7 +12,7 @@ This project is pre-release. Only the latest commit on main receives security up
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Use [GitHub Security Advisories](https://github.com/doxazo-net/watch-aware-preloader/security/advisories/new)
+Use [GitHub Security Advisories](https://github.com/sydlexius/watch-aware-preloader/security/advisories/new)
 to report vulnerabilities privately. This ensures the issue can be triaged and
 a fix prepared before public disclosure.
 

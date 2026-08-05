@@ -76,14 +76,14 @@ Install by URL (Plugins -> Install Plugin) from the stable "latest release" asse
 the newest stable release's package):
 
 ```text
-https://github.com/doxazo-net/watch-aware-preloader/releases/latest/download/watch-aware-preloader.plg
+https://github.com/sydlexius/watch-aware-preloader/releases/latest/download/watch-aware-preloader.plg
 ```
 
 To install a specific pre-release build for testing, use that release's versioned asset URL instead
 (the `latest` URL only resolves to stable releases):
 
 ```text
-https://github.com/doxazo-net/watch-aware-preloader/releases/download/<version>/watch-aware-preloader.plg
+https://github.com/sydlexius/watch-aware-preloader/releases/download/<version>/watch-aware-preloader.plg
 ```
 
 On install the plugin:
@@ -103,6 +103,54 @@ webGui (or the plugin `.cfg`), not `config.toml` directly. Uninstalling removes 
 binary but preserves your settings and `secrets.toml` on the flash drive.
 
 Releases are tagged with letter-free versions (Slackware requirement), e.g. `2026.07.03`.
+
+## Troubleshooting
+
+**"Nothing was warmed" is usually correct.** When every item the preloader wants is already in the
+page cache, the right outcome is to warm nothing, and the settings page says so: *everything already
+cached, nothing needed warming*. A bar that barely moves on a healthy system means there was little
+left to do, not that the plugin is broken. What it reports is what each sweep warmed, not what is
+resident right now - items already cached are skipped and add nothing to the total.
+
+**Where the logs are.** The engine logs to syslog, not to its own file:
+
+```bash
+grep watch-aware-preloader /var/log/syslog | tail -20
+```
+
+Each sweep logs a `sweep complete` line with target, preloaded, skipped, and missing counts. `missing`
+is the number worth watching - see path mapping below.
+
+**Nothing is preloaded, and `missing` is high.** The media server reports its own paths, which are
+rarely the host's. If libraries were added over SMB, Emby reports UNC paths (`\\tower\Movies\...`);
+if the server runs in Docker, it reports container paths (`/media/...`). The plugin maps these to
+host paths automatically by inspecting the running container, and falls back to a UNC rule. When a
+path cannot be mapped, the item counts as missing. To see what the mapping produced:
+
+```bash
+/usr/local/emhttp/plugins/watch-aware-preloader/preloadd detect-pathmaps \
+  -config /boot/config/plugins/watch-aware-preloader/config.toml
+```
+
+It prints the rules it derived, as JSON. Add explicit rules in the settings page if auto-detection
+does not cover your layout. `list-users` and `list-libraries` are the two other read-only
+diagnostics, useful for confirming the server is reachable and returning what you expect. All three
+are subcommands, so the name comes before the flags.
+
+**No users or libraries to pick.** The pickers are populated by **Test connection**, so run that
+first. If it fails, the server URL or API key is wrong - the key is write-only in the UI and is never
+shown back, so re-paste it rather than assuming it is still set.
+
+**Verifying it actually helped.** `-verify` runs one sweep and then reports how much of what it
+warmed is still resident:
+
+```bash
+/usr/local/emhttp/plugins/watch-aware-preloader/preloadd \
+  -config /boot/config/plugins/watch-aware-preloader/config.toml -verify
+```
+
+The honest end-to-end test is still a real one: let a disk spin down, then start something the
+plugin warmed and see whether playback starts immediately.
 
 ## Configuration
 
