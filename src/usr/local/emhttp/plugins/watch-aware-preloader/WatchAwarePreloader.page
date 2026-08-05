@@ -224,6 +224,17 @@ if ($wapEstimate !== null) {
     <div class="wap-stale" style="display:none"></div>
 </div>
 <script type="application/json" id="wap-estimate"><?= $wapEstJson ?></script>
+<?php
+    /*
+     * Kept HERE, immediately after the island it reads, rather than with the
+     * other script tags at the end of the page. meter.js is useless without
+     * #wap-estimate and #wap-estimate is inert without meter.js, so the two
+     * belong in one place: separating them is what let the include go missing
+     * unnoticed once already (#121). The status branch below is deliberately
+     * server-rendered and loads no JavaScript at all.
+     */
+    ?>
+<script src="/plugins/watch-aware-preloader/js/meter.js"></script>
 <?php } elseif ($wapMeterSource === 'status') {
     // Rendered server-side: this is a fixed historical fact, not a projection
     // that reacts to the form, so it needs no JavaScript and is correct with
@@ -249,9 +260,16 @@ if ($wapEstimate !== null) {
         <span class="wap-meter-note">(<?= htmlspecialchars(wap_format_pacific((string) ($wapStatus['last_run'] ?? ''))) ?>)</span>
     </div>
     <div class="wap-bar"><div class="wap-bar-fill" style="width: <?= number_format($wapPct, 1, '.', '') ?>%"></div></div>
-    <div class="wap-meter-text"><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?> - <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached and skipped<?php } ?></div>
+    <div class="wap-meter-text"><?php
+    if ($wapWarmed === 0 && $wapSkipped > 0) {
+        // Nothing warmed BECAUSE nothing needed warming. Leading with "0.0 GiB"
+        // reads as a failure: this exact line was reported as an apparent error
+        // by someone who knew the distinction, which is strong evidence the
+        // number needs a verdict in front of it rather than after it.
+        ?>Everything already cached - <?= $wapSkipped === 1 ? 'the 1 item was' : 'all ' . $wapSkipped . ' items were' ?> resident, so nothing needed warming<?php
+    } else { ?><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?>, plus <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached<?php } ?><?php } ?></div>
 </div>
-<blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so a small bar on a healthy system means there was little left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
+<blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so a bar that barely moves on a healthy system means there was little or nothing left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
 <?php } else { ?>
 <blockquote class="inline_help">Click <strong>Estimate budget</strong> to project your current selection against the cache budget.</blockquote>
 <?php } ?>
@@ -599,8 +617,9 @@ if ($wapMapRows === []) {
 </dl>
 </form>
 <?php
-// Unconditional, unlike meter.js: the order controls exist on every render, not
-// only when an estimate is cached. order.js self-initializes on DOMContentLoaded.
+// Unconditional, unlike meter.js (which loads with its JSON island in the
+// estimate branch above): the order controls exist on every render, not only
+// when an estimate is cached. order.js self-initializes on DOMContentLoaded.
 ?>
 <script src="/plugins/watch-aware-preloader/js/order.js"></script>
 <script src="/plugins/watch-aware-preloader/js/pathmaps.js"></script>
@@ -729,13 +748,30 @@ button[data-wap-move] {
         <?= (int) ($wapStatus['duration_ms'] ?? 0) ?> ms)
     </dd>
 
-    <dt>Warmed</dt>
+    <?php
+    /*
+     * Same care as the budget meter above: these counts are accurate but lead
+     * with zeros in the HEALTHY steady state, where every target was already
+     * resident and the sweep correctly warmed nothing. "Warmed: 0 preloaded"
+     * reads as a failure, so the all-skipped case gets a verdict instead of a
+     * bare tally. The counts still follow for anyone reading the detail.
+     */
+    $wapPre  = (int) ($wapStatus['preloaded'] ?? 0);
+    $wapSkip = (int) ($wapStatus['skipped'] ?? 0);
+    $wapMiss = (int) ($wapStatus['missing'] ?? 0);
+    $wapIdle = $wapPre === 0 && $wapMiss === 0 && $wapSkip > 0;
+    ?>
+    <dt><?= $wapIdle ? 'Cache state' : 'Warmed' ?></dt>
     <dd>
-        <?= (int) ($wapStatus['preloaded'] ?? 0) ?> preloaded,
-        <?= (int) ($wapStatus['skipped'] ?? 0) ?> skipped,
-        <?= (int) ($wapStatus['missing'] ?? 0) ?> missing;
+        <?php if ($wapIdle) { ?>
+        Everything already cached - <?= $wapSkip === 1 ? 'the 1 target was' : 'all ' . $wapSkip . ' targets were' ?> resident, so nothing needed warming.
+        <?php } else { ?>
+        <?= $wapPre ?> preloaded,
+        <?= $wapSkip ?> skipped,
+        <?= $wapMiss ?> missing;
         <?= number_format((float) ($wapStatus['bytes_warmed'] ?? 0) / 1048576, 1) ?> MiB
         of <?= number_format((float) ($wapStatus['budget_bytes'] ?? 0) / 1048576, 1) ?> MiB budget
+        <?php } ?>
     </dd>
 
     <?php if (!empty($wapStatus['by_tier']) && \is_array($wapStatus['by_tier'])) { ?>
