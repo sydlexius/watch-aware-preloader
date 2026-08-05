@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"path/filepath"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/diskresolve"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
@@ -22,6 +23,19 @@ import (
 // positive host check would be a thing that could be WRONG, and a wrong
 // positive here sizes down a file that really is on a spinning disk.
 func poolResidentOpts(fs diskresolve.FS, mntRoot string, log *slog.Logger) []preloader.Option {
+	pred := poolResidentFunc(fs, mntRoot, log)
+	if pred == nil {
+		return nil
+	}
+	return []preloader.Option{preloader.WithPoolResident(pred)}
+}
+
+// poolResidentFunc produces the predicate itself, or nil when placement cannot
+// be resolved. It is split out from poolResidentOpts so a test can assert what
+// the predicate ANSWERS, not merely that some option came back: a permanently
+// false predicate satisfies an option-count assertion just as well as a working
+// one, which is exactly how the union-root defect reached review.
+func poolResidentFunc(fs diskresolve.FS, mntRoot string, log *slog.Logger) func(string) bool {
 	members, err := diskresolve.Discover(fs, mntRoot)
 	if err != nil {
 		log.Info("placement resolution unavailable; sizing every item for the array",
@@ -34,7 +48,12 @@ func poolResidentOpts(fs diskresolve.FS, mntRoot string, log *slog.Logger) []pre
 		return nil
 	}
 
-	resolver := diskresolve.New(fs, members)
+	// Discover reads mntRoot, so the resolver has to match it or the two disagree:
+	// with a root other than /mnt the resolver would keep looking for the union
+	// share at /mnt/user, find no path under it, and answer false for everything -
+	// the predicate wired up and permanently inert, silently.
+	resolver := diskresolve.New(fs, members,
+		diskresolve.WithUnionRoot(filepath.Join(mntRoot, "user")))
 	pools := resolver.PoolMembers()
 	if len(pools) == 0 {
 		// Members exist but none classify as a pool, so IsPool can never return
@@ -45,5 +64,5 @@ func poolResidentOpts(fs diskresolve.FS, mntRoot string, log *slog.Logger) []pre
 		return nil
 	}
 	log.Info("placement resolution enabled", "root", mntRoot, "members", len(members), "pool_members", pools)
-	return []preloader.Option{preloader.WithPoolResident(resolver.IsPool)}
+	return resolver.IsPool
 }

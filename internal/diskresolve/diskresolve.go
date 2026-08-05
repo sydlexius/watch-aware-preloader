@@ -173,9 +173,15 @@ func (r *Resolver) Resolve(unionPath string) (Location, error) {
 	return r.resolveUnder(unionPath, r.unionRoot)
 }
 
-// IsPool reports whether hostPath lives on a pool rather than a spinning array
+// IsPool reports whether unionPath lives on a pool rather than a spinning array
 // disk. Its signature matches preloader.WithPoolResident, so it binds directly
 // as a method value.
+//
+// The argument must be a path under the UNION SHARE (/mnt/user/..., or whatever
+// WithUnionRoot set), not a member path. A path that already names its member -
+// /mnt/cache/Media/x.mkv - is ErrNotUnionPath and therefore FALSE, so a caller
+// passing one silently loses the optimisation on every item rather than failing
+// loudly. Callers map server paths to the union share before asking.
 //
 // Every error collapses to false: ErrUnresolved, ErrNotUnionPath, a stat
 // failure, an empty member list. That is not laziness about error handling - it
@@ -203,8 +209,8 @@ func (r *Resolver) Resolve(unionPath string) (Location, error) {
 // The answer is point-in-time and is deliberately not cached. The mover can
 // relocate a file between this call and the read; a stale answer costs a
 // slightly wrong buffer, but caching it would make that staleness durable.
-func (r *Resolver) IsPool(hostPath string) bool {
-	loc, err := r.resolveAmong(hostPath, r.unionRoot, r.poolMembers())
+func (r *Resolver) IsPool(unionPath string) bool {
+	loc, err := r.resolveAmong(unionPath, r.unionRoot, r.poolMembers())
 	if err != nil {
 		return false
 	}

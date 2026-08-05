@@ -111,3 +111,44 @@ func TestPoolResidentOptsWhenMembersButNoPools(t *testing.T) {
 		t.Errorf("log = %q, must not read as plain success on a zero-pool array", out)
 	}
 }
+
+// TestPoolResidentOptsPredicateAnswersTrue is the end-to-end assertion the
+// count-and-log tests above cannot make: that the predicate this function wires
+// up actually answers TRUE for a pool-resident file.
+//
+// It is the test that would have caught the union-root defect both PR reviewers
+// found. Every other test here asserts only that SOME option came back, which a
+// permanently-false predicate satisfies just as well - the resolver looked for
+// the union share at the hardcoded /mnt/user, found nothing under it, and
+// answered false for everything while still reporting "enabled".
+func TestPoolResidentOptsPredicateAnswersTrue(t *testing.T) {
+	root := mntTree(t, "user", "disk1", "cache")
+	// The union view mirrors the member path onto the same inode, which is what
+	// shfs does and what the resolver matches on.
+	onPool := filepath.Join(root, "cache", "Media", "b.mkv")
+	if err := os.MkdirAll(filepath.Dir(onPool), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(onPool, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	view := filepath.Join(root, "user", "Media", "b.mkv")
+	if err := os.MkdirAll(filepath.Dir(view), 0o755); err != nil {
+		t.Fatalf("mkdir view: %v", err)
+	}
+	if err := os.Link(onPool, view); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+
+	got := poolResidentFunc(diskresolve.OS, root, quietLog())
+	if got == nil {
+		t.Fatal("no pool-resident predicate was produced")
+	}
+	if !got(view) {
+		t.Error("predicate = false for a pool-resident file under the injected root; " +
+			"the resolver's union root does not match the discovered root")
+	}
+	if got(filepath.Join(root, "user", "Media", "absent.mkv")) {
+		t.Error("predicate = true for a file that does not exist, want false")
+	}
+}

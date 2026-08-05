@@ -45,10 +45,10 @@ const estimateResumeFrontBytes = 16 << 20
 // pool item's real sized head is preloader.MinHeadBytes (8 MiB default), while
 // this projection can charge up to preloader.MaxHeadBytes (250 MiB default) for
 // the same item - up to roughly 30x over the real cost, not the flat 16 MiB
-// gap the resume allowance adds. This is not a corner case: per
-// docs/private/phase1-verification.md the maintainer's RecentlyAdded tier
-// lives on the SSD cache pool, so pool residency is the common case for that
-// tier, and the budget bar is user-facing. The gap is deliberate, but NO issue
+// gap the resume allowance adds. This is not a corner case: a typical Unraid
+// setup lands new content on the cache pool before the mover relocates it, so
+// the recently-added tier is largely pool-resident and the budget bar it feeds
+// is user-facing. The gap is deliberate, but NO issue
 // owns surfacing it in the budget meter yet, so a reader who trips over it is
 // not duplicating tracked work by opening one.
 func projectBytes(cfg preloader.Config, it core.MediaItem, tier core.Tier) int64 {
