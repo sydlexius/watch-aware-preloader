@@ -51,9 +51,27 @@ resolver therefore matches on `os.SameFile` - same inode, same device - against
 the union path, not on the path. `TestIdentityBeatsAMatchingPathOnAnotherDisk`
 pins this; neutralising the identity check makes the resolver pick the decoy.
 
-**Cost.** One `stat` on the union path plus at most one `stat` per member. On a
-28-disk array that is 29 stats per file, all against already-hot dentry cache.
-Negligible next to the read the resolution informs.
+**Cost.** One `stat` on the union path plus at most one `stat` per member
+probed. The original prototype probed every member including array disks,
+which is safe only under an assumption - "already-hot dentry cache" - that was
+never verified on-host and is undermined by this plugin's own
+`preload.ram_percent = 50` default, which deliberately fills half of RAM with
+page cache and raises reclaim pressure on exactly the dentry cache the claim
+depended on. A negative lookup against a cold dentry can force XFS to read
+metadata from the platter, spinning up the very disk this plugin exists to
+keep asleep.
+
+The wired consumer (`IsPool`, #113 wiring) fixes this by construction rather
+than by relying on the cache assumption: it probes only the members already
+known to be pools, never array members, so the cost is a handful of stats
+against disks that, on a stock array, never spin down regardless of dentry-cache
+state. "Known to be pools" is a name-based classification, so an HDD-backed pool
+or a stray `/mnt` directory aliasing array content is probed too and can still
+spin a disk up; see the assumption stated in full on `isPool`. Startup logs the
+pool members by name so that case is visible rather than silent.
+`Resolve` still probes the full member list when a caller genuinely
+needs to know which array disk holds a file; that path retains the original,
+now-unverified cost claim and should not be used from a placement-only check.
 
 **Limits, stated honestly.**
 

@@ -70,14 +70,29 @@ var OS FS = osFS{}
 
 // Resolver resolves union paths against a set of array members.
 type Resolver struct {
-	fs      FS
-	members []string
+	fs        FS
+	members   []string
+	unionRoot string
+}
+
+// Option configures a Resolver.
+type Option func(*Resolver)
+
+// WithUnionRoot overrides the union share root, which defaults to "/mnt/user".
+// It exists so the resolver can be exercised against a temporary tree; a
+// deployment has no reason to set it.
+func WithUnionRoot(root string) Option {
+	return func(r *Resolver) { r.unionRoot = root }
 }
 
 // New builds a Resolver over an explicit member list. Members are mount points
 // such as "/mnt/disk1" or "/mnt/cache".
-func New(fs FS, members []string) *Resolver {
-	return &Resolver{fs: fs, members: append([]string(nil), members...)}
+func New(fs FS, members []string, opts ...Option) *Resolver {
+	r := &Resolver{fs: fs, members: append([]string(nil), members...), unionRoot: "/mnt/user"}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 // Discover enumerates array members by listing /mnt: numbered diskN mounts and
@@ -111,6 +126,29 @@ func Discover(fs FS, mntRoot string) ([]string, error) {
 // isPool reports whether a member is a named pool rather than a numbered array
 // disk. Array disks are diskN; anything else assigned to a share is a pool
 // (cache, or a user-named NVMe pool).
+//
+// This is a name-based classification and rests on an assumption that is true
+// for the common case but not universal: that a member which is not "diskN" is
+// backed by solid-state storage that never spins down. Two shapes break it, and
+// both size a spinning disk with no spin-up allowance - a silent undersized head
+// on real content:
+//
+//   - An HDD-backed pool. Unraid permits a pool of spinning disks (e.g. a
+//     btrfs/ZFS pool named "archive"), which spins down exactly like an array
+//     disk. Nothing in the name says so.
+//   - ANY other directory under /mnt that reaches array content. Discover admits
+//     every directory it does not explicitly exclude, so a bind mount, an alias,
+//     or a leftover mount point that shadows array files becomes a "pool"
+//     member. The inode-identity check does NOT catch this: an alias of an array
+//     file genuinely IS the same inode, so it matches.
+//
+// isPool cannot see rotational status from a name, and reading it (via
+// /sys/block/*/queue/rotational) would mean mapping a mount point back to its
+// backing devices, which is a larger change than this classification warrants.
+// There is deliberately no config escape hatch either. The mitigation is
+// visibility: PoolMembers is logged at startup (see cmd/preloadd/placement.go),
+// so an operator sees exactly which members were classified as pools and can
+// spot either shape in one line.
 func isPool(member string) bool {
 	base := filepath.Base(member)
 	suffix, ok := strings.CutPrefix(base, "disk")
@@ -132,10 +170,80 @@ func isPool(member string) bool {
 // unionPath must be under /mnt/user (or the configured union root). The returned
 // Location names the member, the real path, and whether that member is a pool.
 func (r *Resolver) Resolve(unionPath string) (Location, error) {
-	return r.resolveUnder(unionPath, "/mnt/user")
+	return r.resolveUnder(unionPath, r.unionRoot)
+}
+
+// IsPool reports whether unionPath lives on a pool rather than a spinning array
+// disk. Its signature matches preloader.WithPoolResident, so it binds directly
+// as a method value.
+//
+// The argument must be a path under the UNION SHARE (/mnt/user/..., or whatever
+// WithUnionRoot set), not a member path. A path that already names its member -
+// /mnt/cache/Media/x.mkv - is ErrNotUnionPath and therefore FALSE, so a caller
+// passing one silently loses the optimisation on every item rather than failing
+// loudly. Callers map server paths to the union share before asking.
+//
+// Every error collapses to false: ErrUnresolved, ErrNotUnionPath, a stat
+// failure, an empty member list. That is not laziness about error handling - it
+// is the safety property. False means "size for the spin-up allowance", and the
+// cost asymmetry is stark: a wrong SMALL head silently reintroduces the 8.5-9.9 s
+// stall this project exists to remove, while a wrong large one only spends
+// budget. Uncertainty therefore resolves toward the conservative side.
+//
+// The probe is deliberately narrowed to pool members only - Resolve's full
+// member list (array disks included) is never consulted here. The predicate
+// only needs to know WHETHER the file is on A pool, not WHICH member holds it,
+// and restricting the search to pool members gives the identical answer:
+// a file on a pool matches and is true; a file on an array disk matches no pool
+// member and is false, which is also the correct (and already conservative)
+// answer; a file that resolves to nothing is false either way. The reason this
+// matters is not just correctness: stat-ing an array member that does NOT hold
+// the file is a negative lookup, and on a dentry-cache miss XFS resolves that by
+// reading metadata from the platter - spinning up exactly the idle disk this
+// plugin exists to keep asleep. Narrowing the probe to pool members means no
+// array MEMBER path is ever stat-ed. The union path itself is still stat-ed
+// once, to establish the identity every candidate is matched against; shfs may
+// resolve that through the holding member, so this bounds the array-touching
+// work at one lookup rather than eliminating it.
+//
+// The answer is point-in-time and is deliberately not cached. The mover can
+// relocate a file between this call and the read; a stale answer costs a
+// slightly wrong buffer, but caching it would make that staleness durable.
+func (r *Resolver) IsPool(unionPath string) bool {
+	loc, err := r.resolveAmong(unionPath, r.unionRoot, r.poolMembers())
+	if err != nil {
+		return false
+	}
+	return loc.Pool
+}
+
+// poolMembers returns the subset of r.members that are named pools, in the
+// same order they were configured.
+func (r *Resolver) poolMembers() []string {
+	var pools []string
+	for _, m := range r.members {
+		if isPool(m) {
+			pools = append(pools, m)
+		}
+	}
+	return pools
+}
+
+// PoolMembers returns the subset of members that classify as named pools, in
+// the same order they were configured. It exists for startup logging: naming
+// the pool members lets an operator with an HDD-backed pool (see isPool's doc
+// comment on that misclassification) spot the problem from a log line instead
+// of an unexplained stall, and lets an operator on an all-array deployment see
+// at a glance that pool-resident sizing has nothing to act on.
+func (r *Resolver) PoolMembers() []string {
+	return r.poolMembers()
 }
 
 func (r *Resolver) resolveUnder(unionPath, unionRoot string) (Location, error) {
+	return r.resolveAmong(unionPath, unionRoot, r.members)
+}
+
+func (r *Resolver) resolveAmong(unionPath, unionRoot string, members []string) (Location, error) {
 	clean := filepath.Clean(unionPath)
 	rel, ok := relUnder(clean, unionRoot)
 	if !ok {
@@ -150,7 +258,7 @@ func (r *Resolver) resolveUnder(unionPath, unionRoot string) (Location, error) {
 		return Location{}, fmt.Errorf("stat %s: %w", clean, err)
 	}
 
-	for _, m := range r.members {
+	for _, m := range members {
 		cand := filepath.Join(m, rel)
 		got, err := r.fs.Stat(cand)
 		if err != nil {

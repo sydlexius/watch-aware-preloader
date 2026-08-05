@@ -15,6 +15,7 @@ import (
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/app"
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
+	"github.com/doxazo-net/watch-aware-preloader/internal/diskresolve"
 	"github.com/doxazo-net/watch-aware-preloader/internal/estimate"
 	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/pagecache"
@@ -103,7 +104,8 @@ func main() {
 		TailBytes:     cfg.Preload.TailMB << 20,
 	}
 	mapper := buildMapper(context.Background(), cfg.PathMap, execRunner, log)
-	pre := preloader.New(preCfg, pagecache.New(cfg.Residency.ProbeBytes, cfg.Residency.ProbeThreshold, cfg.Residency.ProbeTimeout, log), mapper, preloader.DefaultFS(), log)
+	placement := poolResidentOpts(diskresolve.OS, "/mnt", log)
+	pre := preloader.New(preCfg, pagecache.New(cfg.Residency.ProbeBytes, cfg.Residency.ProbeThreshold, cfg.Residency.ProbeTimeout, log), mapper, preloader.DefaultFS(), log, placement...)
 
 	d := app.NewDaemon(cfg, client, pre, log)
 
