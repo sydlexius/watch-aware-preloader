@@ -748,13 +748,30 @@ button[data-wap-move] {
         <?= (int) ($wapStatus['duration_ms'] ?? 0) ?> ms)
     </dd>
 
-    <dt>Warmed</dt>
+    <?php
+    /*
+     * Same care as the budget meter above: these counts are accurate but lead
+     * with zeros in the HEALTHY steady state, where every target was already
+     * resident and the sweep correctly warmed nothing. "Warmed: 0 preloaded"
+     * reads as a failure, so the all-skipped case gets a verdict instead of a
+     * bare tally. The counts still follow for anyone reading the detail.
+     */
+    $wapPre  = (int) ($wapStatus['preloaded'] ?? 0);
+    $wapSkip = (int) ($wapStatus['skipped'] ?? 0);
+    $wapMiss = (int) ($wapStatus['missing'] ?? 0);
+    $wapIdle = $wapPre === 0 && $wapMiss === 0 && $wapSkip > 0;
+    ?>
+    <dt><?= $wapIdle ? 'Cache state' : 'Warmed' ?></dt>
     <dd>
-        <?= (int) ($wapStatus['preloaded'] ?? 0) ?> preloaded,
-        <?= (int) ($wapStatus['skipped'] ?? 0) ?> skipped,
-        <?= (int) ($wapStatus['missing'] ?? 0) ?> missing;
+        <?php if ($wapIdle) { ?>
+        Everything already cached - <?= $wapSkip === 1 ? 'the 1 target was' : 'all ' . $wapSkip . ' targets were' ?> resident, so nothing needed warming.
+        <?php } else { ?>
+        <?= $wapPre ?> preloaded,
+        <?= $wapSkip ?> skipped,
+        <?= $wapMiss ?> missing;
         <?= number_format((float) ($wapStatus['bytes_warmed'] ?? 0) / 1048576, 1) ?> MiB
         of <?= number_format((float) ($wapStatus['budget_bytes'] ?? 0) / 1048576, 1) ?> MiB budget
+        <?php } ?>
     </dd>
 
     <?php if (!empty($wapStatus['by_tier']) && \is_array($wapStatus['by_tier'])) { ?>
