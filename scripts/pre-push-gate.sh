@@ -49,7 +49,53 @@ echo "=== golangci-lint ==="
 if ! command -v golangci-lint >/dev/null 2>&1; then
     echo "SKIP: golangci-lint not installed (install the repo's documented golangci-lint v2 toolchain -- see REQUIREMENTS.md)"
 else
-    golangci-lint run ./...
+    # A findings file naming a path that no longer exists is a STALE CACHE, not a
+    # defect: golangci-lint keys results by absolute path, so removing a git
+    # worktree leaves entries pointing into it and they resurface as phantom
+    # findings on the next run. They cannot be fixed (the files are gone) and they
+    # block the push, which is how a routine worktree cleanup turns into a
+    # mysterious gate failure.
+    #
+    # Detect it rather than clearing unconditionally: a blanket cache clean would
+    # make every run pay a full re-lint. Retry ONCE after clearing, so a genuine
+    # finding still fails the gate on the second pass.
+    # The test is "does the finding name a file that does not exist", which
+    # catches a stale entry from ANY removed worktree rather than only the
+    # conventional .claude/worktrees location. A genuine finding always names a
+    # file that is present, so this cannot mask one.
+    # Written WITHOUT an early-terminating pipeline on purpose. Under the
+    # `set -o pipefail` above, a `break` inside a `while read` (or a `grep -q`)
+    # closes the pipe while upstream commands are still writing, so they take
+    # SIGPIPE and the pipeline reports failure even when the scan succeeded -
+    # the function would return false and the retry would never fire, exactly
+    # when it was needed. The loop reads every candidate and sets a flag.
+    lint_stale() {
+        local files f found=1
+        files=$(printf '%s' "$1" | grep -oE '^[^ :]+\.go:[0-9]+:' | cut -d: -f1 | sort -u) || true
+        [ -n "$files" ] || return 1
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if [ ! -e "$f" ]; then
+                found=0
+            fi
+        done <<EOF_FILES
+$files
+EOF_FILES
+
+        return "$found"
+    }
+
+    lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
+    if [ "${lint_rc:-0}" -ne 0 ] && lint_stale "$lint_out"; then
+        echo "stale lint cache detected (findings name a removed worktree); clearing and retrying"
+        golangci-lint cache clean
+        lint_rc=0
+        lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
+    fi
+    if [ "${lint_rc:-0}" -ne 0 ]; then
+        printf '%s\n' "$lint_out"
+        exit "$lint_rc"
+    fi
     echo "OK"
 fi
 
