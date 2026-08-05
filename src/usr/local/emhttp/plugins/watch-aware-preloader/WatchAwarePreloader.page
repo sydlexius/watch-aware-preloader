@@ -263,13 +263,13 @@ if ($wapEstimate !== null) {
     <div class="wap-meter-text"><?php
     if ($wapWarmed === 0 && $wapSkipped > 0) {
         // Nothing warmed BECAUSE nothing needed warming. Leading with "0.0 GiB"
-        // here reads as a failure - it was misread as an error by the
-        // maintainer himself, which is the strongest possible evidence the
+        // reads as a failure: this exact line was reported as an apparent error
+        // by someone who knew the distinction, which is strong evidence the
         // number needs a verdict in front of it rather than after it.
         ?>Everything already cached - <?= $wapSkipped === 1 ? 'the 1 item was' : 'all ' . $wapSkipped . ' items were' ?> resident, so nothing needed warming<?php
     } else { ?><?= htmlspecialchars(wap_gib($wapWarmed)) ?> warmed of <?= htmlspecialchars(wap_gib($wapBudget)) ?> budget<?php if ($wapSkipped > 0) { ?>, plus <?= $wapSkipped ?> item<?= $wapSkipped === 1 ? '' : 's' ?> already cached<?php } ?><?php } ?></div>
 </div>
-<blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so an empty bar on a healthy system means there was nothing left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
+<blockquote class="inline_help">What the last sweep actually warmed, not what is cached right now - items already resident are skipped and add nothing to the bar, so a bar that barely moves on a healthy system means there was little or nothing left to do. Click <strong>Estimate budget</strong> to project your current selection instead.</blockquote>
 <?php } else { ?>
 <blockquote class="inline_help">Click <strong>Estimate budget</strong> to project your current selection against the cache budget.</blockquote>
 <?php } ?>
