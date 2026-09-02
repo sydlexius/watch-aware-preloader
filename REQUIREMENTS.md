@@ -12,7 +12,7 @@ pinned language versions live in [`.tool-versions`](.tool-versions) - run
 
 | Tool | Version | Why | Declared in |
 |------|---------|-----|-------------|
-| Go | 1.26+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions` |
+| Go | 1.27+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions` |
 | make | any | task runner | - |
 
 The compiled daemon is a single static binary with **no runtime dependencies**
