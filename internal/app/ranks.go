@@ -7,7 +7,6 @@ import (
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/scorer"
 )
 
@@ -54,7 +53,7 @@ func cfgKeyNormalize(s string) string { return strings.ReplaceAll(s, "-", "_") }
 // refused rather than silently resolved in favor of whichever tier is checked
 // first. Returning early on the name match is what let a bystander collect
 // another user's override with no warning at all.
-func resolveUserKey(users []emby.User, key string) (string, userRef) {
+func resolveUserKey(users []core.User, key string) (string, userRef) {
 	var named, keyed []string
 	normKey := cfgKeyNormalize(key)
 	for _, u := range users {
@@ -109,7 +108,7 @@ func tierPositions(o config.TierOrder) map[core.Tier]int {
 // Overrides inherit by absence: a user with no override entry gets the global
 // order. An override that binds to no known user is warned and ignored, so a
 // stale entry for an un-enrolled user cannot brick a config.
-func ResolveRanks(cfg *config.Config, users []emby.User, log *slog.Logger) scorer.RankOpts {
+func ResolveRanks(cfg *config.Config, users []core.User, log *slog.Logger) scorer.RankOpts {
 	global := tierPositions(cfg.Tiers.Order)
 
 	// Resolve overrides to IDs once, warning on any that bind to nobody.

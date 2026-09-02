@@ -9,14 +9,22 @@ import (
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 	"github.com/doxazo-net/watch-aware-preloader/internal/libscope"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/scorer"
 )
 
-// Provider is the subset of the Emby client the pipeline needs.
+// Provider is the media-server surface the pipeline needs.
+//
+// It names only core types, so any adapter satisfying it works: the pipeline
+// has no compile-time dependency on a particular server. That is what makes a
+// second adapter possible (#3) - an interface naming a vendor type can only
+// ever have one implementation.
+//
+// The method set is deliberately the SUBSET the pipeline uses, not everything a
+// server offers, so an adapter implements what preloading needs rather than a
+// whole API.
 type Provider interface {
-	Users(ctx context.Context) ([]emby.User, error)
-	Libraries(ctx context.Context) ([]emby.Library, error)
+	Users(ctx context.Context) ([]core.User, error)
+	Libraries(ctx context.Context) ([]core.Library, error)
 	Resume(ctx context.Context, userID string) ([]core.MediaItem, error)
 	NextUp(ctx context.Context, userID string) ([]core.MediaItem, error)
 	RecentlyAdded(ctx context.Context, userID string) ([]core.MediaItem, error)
@@ -47,7 +55,7 @@ func capItems(items []core.MediaItem, limit int) []core.MediaItem {
 // of those libraries; toHost normalizes item paths and library locations to a
 // common host-path namespace. An empty enabledLibraries leaves candidates
 // unfiltered.
-func CollectCandidates(ctx context.Context, p Provider, users []emby.User, enabledLibraries []string, tiers config.TiersConfig, opts scorer.RankOpts, toHost libscope.ToHost, log *slog.Logger) ([]scorer.Candidate, map[string]bool, error) {
+func CollectCandidates(ctx context.Context, p Provider, users []core.User, enabledLibraries []string, tiers config.TiersConfig, opts scorer.RankOpts, toHost libscope.ToHost, log *slog.Logger) ([]scorer.Candidate, map[string]bool, error) {
 	playing, err := p.NowPlayingIDs(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -106,7 +114,7 @@ func CollectCandidates(ctx context.Context, p Provider, users []emby.User, enabl
 // to a common host-path namespace. When the requested scope cannot be applied
 // (a bad library ID, or paths that do not map), it logs a warning and warms all
 // libraries rather than failing silently.
-func filterByLibraries(cands []scorer.Candidate, libs []emby.Library, enabledLibraries []string, toHost libscope.ToHost, log *slog.Logger) []scorer.Candidate {
+func filterByLibraries(cands []scorer.Candidate, libs []core.Library, enabledLibraries []string, toHost libscope.ToHost, log *slog.Logger) []scorer.Candidate {
 	scopeLibs := make([]libscope.Library, len(libs))
 	for i, l := range libs {
 		scopeLibs[i] = libscope.Library{ID: l.ID, Locations: l.Locations}

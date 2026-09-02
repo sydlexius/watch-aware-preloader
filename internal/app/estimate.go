@@ -8,7 +8,6 @@ import (
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 	"github.com/doxazo-net/watch-aware-preloader/internal/estimate"
 	"github.com/doxazo-net/watch-aware-preloader/internal/libscope"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 	"github.com/doxazo-net/watch-aware-preloader/internal/scorer"
 )
@@ -69,7 +68,7 @@ const estimateCeilingPerUserTier = 200
 // library so attribution matches the same host-path prefix logic library scoping
 // uses. A library whose Locations do not map (libscope falls back to allow-all)
 // is skipped for attribution rather than swallowing every item.
-func newLibraryAttributor(libs []emby.Library, toHost libscope.ToHost) func(serverPath string) string {
+func newLibraryAttributor(libs []core.Library, toHost libscope.ToHost) func(serverPath string) string {
 	type libScope struct {
 		id    string
 		scope *libscope.Scope

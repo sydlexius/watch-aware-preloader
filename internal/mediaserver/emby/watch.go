@@ -12,10 +12,11 @@ import (
 const ticksPerSecond = 10_000_000
 
 // User is an Emby user account.
-type User struct {
-	ID   string `json:"Id"`
-	Name string `json:"Name"`
-}
+// User and Library are aliases for the provider-neutral types in core, which
+// is where the pipeline's Provider interface names them (#3). They are aliases
+// rather than distinct types so this package's API is unchanged and an
+// adapter's decode target stays spelled the way its endpoints read.
+type User = core.User
 
 type mediaSource struct {
 	Path    string `json:"Path"`
@@ -99,12 +100,7 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 // empty when the server reports it as null. Locations are the library's source
 // folders as the server reports them (used to decide which library an item
 // belongs to, for the library-scope filter).
-type Library struct {
-	ID        string   `json:"ItemId"`
-	Name      string   `json:"Name"`
-	Type      string   `json:"CollectionType"`
-	Locations []string `json:"Locations"`
-}
+type Library = core.Library
 
 // Libraries lists the server's media libraries (VirtualFolders).
 func (c *Client) Libraries(ctx context.Context) ([]Library, error) {

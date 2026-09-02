@@ -50,6 +50,36 @@ type MediaItem struct {
 	UserID       string        // the user account that surfaced this item
 }
 
+// User is a media-server user account.
+//
+// It lives here rather than in a vendor package because the pipeline's Provider
+// interface names it, and an interface that names a vendor type can only ever
+// have one implementation. Emby and Jellyfin both report an id and a display
+// name, so the shape is genuinely shared rather than an Emby detail promoted
+// upward (#3).
+//
+// The JSON tags are load-bearing: both servers return PascalCase fields, so an
+// adapter can decode straight into this type. An adapter whose wire shape
+// differs should decode into its own type and convert, rather than widening
+// these tags.
+type User struct {
+	ID   string `json:"Id"`
+	Name string `json:"Name"`
+}
+
+// Library is a media-server library and the filesystem locations backing it.
+//
+// Locations are paths as the SERVER reports them, so a consumer comparing them
+// against item paths must normalize both into a common namespace first (see
+// libscope.ToHost). Type is the server's collection type ("movies", "tvshows",
+// and so on) and is empty when the server does not classify the library.
+type Library struct {
+	ID        string   `json:"ItemId"`
+	Name      string   `json:"Name"`
+	Type      string   `json:"CollectionType"`
+	Locations []string `json:"Locations"`
+}
+
 // PreloadTarget is a scored, ordered item ready to preload.
 type PreloadTarget struct {
 	Item MediaItem

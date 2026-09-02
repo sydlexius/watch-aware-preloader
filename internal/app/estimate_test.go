@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/pathmap"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 )
@@ -51,8 +50,8 @@ func TestProjectBytesGeometryFallback(t *testing.T) {
 func TestProjectWarmSetFullUniverse(t *testing.T) {
 	// Two users, resume + next-up items; one library scoping /mnt/user/TV.
 	p := &stubProvider{
-		users:     []emby.User{{ID: "3", Name: "jesse"}, {ID: "7", Name: "rachel"}},
-		libraries: []emby.Library{{ID: "L1", Locations: []string{"/mnt/user/TV"}}},
+		users:     []core.User{{ID: "3", Name: "jesse"}, {ID: "7", Name: "rachel"}},
+		libraries: []core.Library{{ID: "L1", Locations: []string{"/mnt/user/TV"}}},
 		resume: map[string][]core.MediaItem{
 			"3": {{ID: "a", ServerPath: "/mnt/user/TV/a.mkv", BitrateBps: 8_000_000, UserID: "3"}},
 		},
@@ -89,8 +88,8 @@ func TestProjectWarmSetFullUniverse(t *testing.T) {
 func TestProjectWarmSetUnattributableLibraryIsBlank(t *testing.T) {
 	// Item path under no known library location -> l == "".
 	p := &stubProvider{
-		users:     []emby.User{{ID: "3", Name: "jesse"}},
-		libraries: []emby.Library{{ID: "L1", Locations: []string{"/mnt/user/Movies"}}},
+		users:     []core.User{{ID: "3", Name: "jesse"}},
+		libraries: []core.Library{{ID: "L1", Locations: []string{"/mnt/user/Movies"}}},
 		nextUp:    map[string][]core.MediaItem{"3": {{ID: "x", ServerPath: "/mnt/user/TV/x.mkv", BitrateBps: 8_000_000, UserID: "3"}}},
 		resume:    map[string][]core.MediaItem{},
 		latest:    map[string][]core.MediaItem{},
@@ -116,7 +115,7 @@ func TestNewLibraryAttributorSkipsUnmappableLibrary(t *testing.T) {
 		}
 		return p, true
 	}
-	libs := []emby.Library{
+	libs := []core.Library{
 		{ID: "L1", Locations: []string{"/nomap"}},
 		{ID: "L2", Locations: []string{"/mnt/user/TV"}},
 	}

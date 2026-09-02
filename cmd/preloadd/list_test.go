@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
+	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 )
 
 func TestWriteUsersJSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeUsersJSON([]emby.User{{ID: "u1", Name: "Alice"}, {ID: "u2", Name: "Bob"}}, &buf); err != nil {
+	if err := writeUsersJSON([]core.User{{ID: "u1", Name: "Alice"}, {ID: "u2", Name: "Bob"}}, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var got []struct{ ID, Name string }
@@ -35,7 +35,7 @@ func TestWriteUsersJSONEmptyIsArray(t *testing.T) {
 
 func TestWriteLibrariesJSON(t *testing.T) {
 	var buf bytes.Buffer
-	libs := []emby.Library{{ID: "111", Name: "Movies", Type: "movies"}, {ID: "222", Name: "Music", Type: ""}}
+	libs := []core.Library{{ID: "111", Name: "Movies", Type: "movies"}, {ID: "222", Name: "Music", Type: ""}}
 	if err := writeLibrariesJSON(libs, &buf); err != nil {
 		t.Fatal(err)
 	}

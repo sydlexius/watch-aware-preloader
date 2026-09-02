@@ -4,12 +4,14 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os/exec"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/scorer"
 )
 
@@ -32,13 +34,13 @@ func allTiers() config.TiersConfig {
 // allTiersRanked resolves allTiers() into RankOpts for the given users, matching
 // what the sweep call chain feeds CollectCandidates. Enrollment and per-user tier
 // enablement live in RankOpts, so a collection test needs both halves.
-func allTiersRanked(users []emby.User) scorer.RankOpts {
+func allTiersRanked(users []core.User) scorer.RankOpts {
 	return ResolveRanks(&config.Config{Tiers: allTiers()}, users, discardLog())
 }
 
 type stubProvider struct {
-	users     []emby.User
-	libraries []emby.Library
+	users     []core.User
+	libraries []core.Library
 	resume    map[string][]core.MediaItem
 	nextUp    map[string][]core.MediaItem
 	latest    map[string][]core.MediaItem
@@ -52,8 +54,8 @@ type stubProvider struct {
 	latestCalls []string
 }
 
-func (s *stubProvider) Users(context.Context) ([]emby.User, error) { return s.users, nil }
-func (s *stubProvider) Libraries(context.Context) ([]emby.Library, error) {
+func (s *stubProvider) Users(context.Context) ([]core.User, error) { return s.users, nil }
+func (s *stubProvider) Libraries(context.Context) ([]core.Library, error) {
 	return s.libraries, nil
 }
 func (s *stubProvider) Resume(_ context.Context, id string) ([]core.MediaItem, error) {
@@ -74,7 +76,7 @@ func (s *stubProvider) NowPlayingIDs(context.Context) (map[string]bool, error) {
 
 func TestCollectCandidatesTiersAndPlaying(t *testing.T) {
 	p := &stubProvider{
-		users:   []emby.User{{ID: "1", Name: "jesse"}},
+		users:   []core.User{{ID: "1", Name: "jesse"}},
 		resume:  map[string][]core.MediaItem{"1": {{ID: "r1"}}},
 		nextUp:  map[string][]core.MediaItem{"1": {{ID: "n1"}}},
 		latest:  map[string][]core.MediaItem{"1": {{ID: "l1"}}},
@@ -103,8 +105,8 @@ func TestCollectCandidatesLibraryScope(t *testing.T) {
 	// Two candidates: one in the Movies library, one in Music. Scoping to
 	// Movies (id "m") must drop the Music item.
 	p := &stubProvider{
-		users: []emby.User{{ID: "1", Name: "jesse"}},
-		libraries: []emby.Library{
+		users: []core.User{{ID: "1", Name: "jesse"}},
+		libraries: []core.Library{
 			{ID: "m", Name: "Movies", Locations: []string{"/share/Movies"}},
 			{ID: "u", Name: "Music", Locations: []string{"/share/Music"}},
 		},
@@ -140,7 +142,7 @@ func TestCollectCandidatesLibraryScope(t *testing.T) {
 
 func TestCollectCandidatesTierDials(t *testing.T) {
 	p := &stubProvider{
-		users:  []emby.User{{ID: "1", Name: "jesse"}},
+		users:  []core.User{{ID: "1", Name: "jesse"}},
 		resume: map[string][]core.MediaItem{"1": {{ID: "r1"}}},
 		nextUp: map[string][]core.MediaItem{"1": {{ID: "n1"}}},
 		latest: map[string][]core.MediaItem{"1": {{ID: "l1"}, {ID: "l2"}, {ID: "l3"}}},
@@ -184,7 +186,7 @@ func TestCollectCandidatesSkipsTierDisabledForOneUser(t *testing.T) {
 	// Alice keeps next-up, Bob disabled it. Bob's NextUp endpoint must not be
 	// called at all - the saved API call is behavior, not an optimization.
 	p := &stubProvider{
-		users: []emby.User{{ID: "id-a", Name: "Alice"}, {ID: "id-b", Name: "Bob"}},
+		users: []core.User{{ID: "id-a", Name: "Alice"}, {ID: "id-b", Name: "Bob"}},
 	}
 	opts := scorer.RankOpts{
 		TierRank: map[string]map[core.Tier]int{
@@ -209,7 +211,7 @@ func TestCollectCandidatesSkipsUnenrolledUser(t *testing.T) {
 	// Bob is absent from TierRank, so he is not enrolled: no tier of his is
 	// fetched at all.
 	p := &stubProvider{
-		users: []emby.User{{ID: "id-a", Name: "Alice"}, {ID: "id-b", Name: "Bob"}},
+		users: []core.User{{ID: "id-a", Name: "Alice"}, {ID: "id-b", Name: "Bob"}},
 	}
 	opts := scorer.RankOpts{
 		TierRank: map[string]map[core.Tier]int{"id-a": {core.TierResume: 0}},
@@ -232,7 +234,7 @@ func TestCollectCandidatesStampsUserID(t *testing.T) {
 	// RankOpts.slot answers an unstamped item with a bare skip, so an adapter
 	// that forgot the field would warm nothing and still report a clean sweep.
 	p := &stubProvider{
-		users:  []emby.User{{ID: "id-a", Name: "Alice"}},
+		users:  []core.User{{ID: "id-a", Name: "Alice"}},
 		resume: map[string][]core.MediaItem{"id-a": {{ID: "r1"}}}, // UserID deliberately unset
 	}
 	cands, _, err := CollectCandidates(context.Background(), p, p.users, nil, allTiers(), allTiersRanked(p.users), nil, discardLog())
@@ -255,4 +257,74 @@ func replaceBackslash(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// A Provider implementation that imports no vendor package must satisfy the
+// interface and run through the pipeline. This is the property the refactor
+// exists to establish (#3): before it, Provider named emby.User and
+// emby.Library, so the pipeline could not be exercised without the Emby
+// package in the build graph at all.
+//
+// HONEST LIMIT, so nobody reads more into this than it proves: emby.User is a
+// type ALIAS for core.User, so the two are the same type and this would still
+// compile if Provider were respelled with the emby names. It therefore does
+// NOT guard against the interface regaining a vendor spelling - verified by
+// mutation, which compiled clean.
+//
+// What actually guards that is the import graph: internal/app has no non-test
+// import of internal/mediaserver/emby, and TestAppDoesNotImportAVendorPackage
+// below asserts exactly that. Read the two together.
+type vendorNeutralProvider struct{}
+
+func (vendorNeutralProvider) Users(context.Context) ([]core.User, error) { return nil, nil }
+func (vendorNeutralProvider) Libraries(context.Context) ([]core.Library, error) {
+	return nil, nil
+}
+func (vendorNeutralProvider) Resume(context.Context, string) ([]core.MediaItem, error) {
+	return nil, nil
+}
+func (vendorNeutralProvider) NextUp(context.Context, string) ([]core.MediaItem, error) {
+	return nil, nil
+}
+func (vendorNeutralProvider) RecentlyAdded(context.Context, string) ([]core.MediaItem, error) {
+	return nil, nil
+}
+func (vendorNeutralProvider) NowPlayingIDs(context.Context) (map[string]bool, error) {
+	return nil, nil
+}
+
+var _ Provider = vendorNeutralProvider{}
+
+func TestProviderAcceptsANonVendorImplementation(t *testing.T) {
+	cands, playing, err := CollectCandidates(context.Background(), vendorNeutralProvider{},
+		nil, nil, config.TiersConfig{}, scorer.RankOpts{}, nil, discardLog())
+	if err != nil {
+		t.Fatalf("CollectCandidates with a non-vendor provider: %v", err)
+	}
+	if len(cands) != 0 || len(playing) != 0 {
+		t.Errorf("got %d candidates and %d playing from an empty provider, want none",
+			len(cands), len(playing))
+	}
+}
+
+// The pipeline must not depend on a specific media server. This reads the
+// actual import graph rather than trusting a type spelling, which is what the
+// alias above cannot do: `go list` reports what the package really pulls in.
+//
+// A second adapter (#3) is only possible while this holds. If it fails, some
+// non-test file in internal/app has taken a vendor import and the interface has
+// quietly re-coupled.
+func TestAppDoesNotImportAVendorPackage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "go", "list", "-deps", ".").Output()
+	if err != nil {
+		t.Skipf("go list unavailable: %v", err)
+	}
+	for _, dep := range strings.Split(string(out), "\n") {
+		if strings.Contains(dep, "internal/mediaserver/") {
+			t.Errorf("internal/app depends on %s; the pipeline must name only core "+
+				"types so a second adapter stays possible", dep)
+		}
+	}
 }

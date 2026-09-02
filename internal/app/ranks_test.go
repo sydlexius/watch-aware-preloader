@@ -9,7 +9,6 @@ import (
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 )
 
 // captureLog returns a logger writing into buf, for asserting on warnings.
@@ -17,7 +16,7 @@ func captureLog(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(buf, nil))
 }
 
-var testUsers = []emby.User{
+var testUsers = []core.User{
 	{ID: "id-a", Name: "Alice"},
 	{ID: "id-b", Name: "Bob"},
 	{ID: "id-c", Name: "Cara"},
@@ -175,7 +174,7 @@ func TestResolveRanksUnknownOverrideIgnored(t *testing.T) {
 
 // dupNameUsers has two users sharing the display name "Alice", so a name-keyed
 // reference to her is ambiguous while an ID-keyed one is not.
-var dupNameUsers = []emby.User{
+var dupNameUsers = []core.User{
 	{ID: "id-a", Name: "Alice"},
 	{ID: "id-d", Name: "Alice"},
 	{ID: "id-b", Name: "Bob"},
@@ -308,7 +307,7 @@ func TestResolveRanksOverrideExactIDBeatsCfgKeySpelling(t *testing.T) {
 // Each is still its own EXACT id, so exact-match precedence must bind each key to
 // its own user with no bleed in either direction.
 func TestResolveRanksCfgKeyCollisionBindsExactIDsOnly(t *testing.T) {
-	users := []emby.User{{ID: "x-y", Name: "Xavier"}, {ID: "x_y", Name: "Yvonne"}}
+	users := []core.User{{ID: "x-y", Name: "Xavier"}, {ID: "x_y", Name: "Yvonne"}}
 	cfg := &config.Config{}
 	cfg.Tiers.Order = config.DefaultTierOrder()
 	cfg.Tiers.Override = map[string]config.TierOrder{"x-y": {core.TierResume}}
@@ -344,7 +343,7 @@ func TestResolveRanksCfgKeyCollisionBindsExactIDsOnly(t *testing.T) {
 func TestResolveRanksCfgKeyAmbiguityRefused(t *testing.T) {
 	// "a_b" is neither user's exact id nor exact name, yet normalizes onto both:
 	// via id "a-b" for one and via display name "a-b" for the other.
-	users := []emby.User{
+	users := []core.User{
 		{ID: "a-b", Name: "Ann"},
 		{ID: "id-z", Name: "a-b"},
 	}
@@ -371,7 +370,7 @@ func TestResolveRanksCfgKeyAmbiguityRefused(t *testing.T) {
 // another user's override silently. This is the axis a mutation that reordered
 // the two tiers slipped through, so it is pinned explicitly.
 func TestResolveRanksNameVsCfgKeyConflictRefused(t *testing.T) {
-	users := []emby.User{
+	users := []core.User{
 		{ID: "id-a", Name: "bob_smith"}, // exact-name match for the key
 		{ID: "bob-smith", Name: "Bob"},  // .cfg-key-spelling match for the key
 	}
