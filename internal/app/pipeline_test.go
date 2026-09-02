@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -319,7 +320,21 @@ func TestAppDoesNotImportAVendorPackage(t *testing.T) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "go", "list", "-deps", ".").Output()
 	if err != nil {
-		t.Skipf("go list unavailable: %v", err)
+		// Skip ONLY when the toolchain is genuinely absent, which is the one
+		// case where the guard cannot be evaluated at all. Any other failure -
+		// a module error, a broken build cache, a sandbox denial - means the
+		// question went UNANSWERED, and skipping there would silently disable
+		// the only real guard in this package on exactly the sort of broken
+		// tree it exists to catch (Copilot, PR #137).
+		if errors.Is(err, exec.ErrNotFound) {
+			t.Skipf("go toolchain not available: %v", err)
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("go list -deps failed (exit %d): %v\nstderr: %s",
+				ee.ExitCode(), err, ee.Stderr)
+		}
+		t.Fatalf("go list -deps failed: %v", err)
 	}
 	for _, dep := range strings.Split(string(out), "\n") {
 		if strings.Contains(dep, "internal/mediaserver/") {
