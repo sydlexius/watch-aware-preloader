@@ -71,7 +71,10 @@ func (tr tree) resolver(members ...string) *Resolver {
 	for i, m := range members {
 		full[i] = filepath.Join(tr.root, m)
 	}
-	return New(OS, full)
+	// "cache" is the tree's stand-in for a pool. It is a plain directory, so it
+	// must be presented as a mount root for the pool path to be reachable at
+	// all; see mountedFS for why that one fact is faked and nothing else is.
+	return New(tr.asPool(OS, "cache"), full)
 }
 
 func (tr tree) resolve(r *Resolver, rel string) (Location, error) {
@@ -171,7 +174,11 @@ func TestMissingFileReportsTheStatError(t *testing.T) {
 	}
 }
 
-func TestIsPool(t *testing.T) {
+// The NAME pass alone. These paths deliberately do not exist: the property here
+// is purely how a member's name reads, which is the cheap first pass isPool
+// makes before confirming against the filesystem. The mountpoint half is
+// covered by TestPlainDirectoryIsNotAPool and TestUndeterminedMountpointIsNotAPool.
+func TestNameLooksLikePool(t *testing.T) {
 	for _, tc := range []struct {
 		member string
 		pool   bool
@@ -183,8 +190,8 @@ func TestIsPool(t *testing.T) {
 		{"/mnt/diskfoo", true}, // a pool a user happened to name "diskfoo"
 		{"/mnt/disk", true},    // not a numbered array disk
 	} {
-		if got := isPool(tc.member); got != tc.pool {
-			t.Errorf("isPool(%q) = %v, want %v", tc.member, got, tc.pool)
+		if got := nameLooksLikePool(tc.member); got != tc.pool {
+			t.Errorf("nameLooksLikePool(%q) = %v, want %v", tc.member, got, tc.pool)
 		}
 	}
 }
@@ -231,7 +238,7 @@ func (tr tree) poolResolver(members ...string) *Resolver {
 	for i, m := range members {
 		full[i] = filepath.Join(tr.root, m)
 	}
-	return New(OS, full, WithUnionRoot(tr.union))
+	return New(tr.asPool(OS, "cache"), full, WithUnionRoot(tr.union))
 }
 
 func TestIsPoolPredicateTrueOnAPool(t *testing.T) {
@@ -278,6 +285,35 @@ func TestIsPoolPredicateFalseOnUncertainty(t *testing.T) {
 	}
 }
 
+// mountedFS presents a chosen set of directories as mount roots.
+//
+// A unit test cannot mount a real filesystem, and the members in newTree are
+// plain subdirectories of one t.TempDir(), so they all share a device number
+// and IsMountpoint correctly reports false for every one of them. That is the
+// right answer for the tree as built, but it leaves no way to exercise the
+// pool path at all. This fake supplies the one fact the tree cannot: which
+// members are mount roots. Everything else - inode identity, the union
+// linkage, the stat sequence - stays real, so only the unrepresentable fact
+// is faked.
+type mountedFS struct {
+	FS
+	mounts map[string]bool
+}
+
+func (m *mountedFS) IsMountpoint(name string) (bool, error) {
+	return m.mounts[name], nil
+}
+
+// asPool makes the named members read as mount roots, so a resolver built on
+// the returned FS classifies them as pools.
+func (tr tree) asPool(base FS, members ...string) FS {
+	mounts := make(map[string]bool, len(members))
+	for _, m := range members {
+		mounts[filepath.Join(tr.root, m)] = true
+	}
+	return &mountedFS{FS: base, mounts: mounts}
+}
+
 // countingFS wraps a real FS and records every path passed to Stat, so a test
 // can assert which members were (and were not) probed.
 type countingFS struct {
@@ -306,7 +342,7 @@ func TestIsPoolDoesNotStatArrayMembers(t *testing.T) {
 	// exists to remove. IsPool must never touch array members at all.
 	tr := newTree(t)
 	tr.place(t, "cache", "Media/b.mkv", "x")
-	cfs := &countingFS{FS: OS}
+	cfs := &countingFS{FS: tr.asPool(OS, "cache")}
 	r := New(cfs, []string{
 		filepath.Join(tr.root, "disk1"),
 		filepath.Join(tr.root, "disk2"),
@@ -336,7 +372,7 @@ func TestIsPoolDoesNotStatArrayMembersForAnArrayResidentFile(t *testing.T) {
 	// probed by IsPool (Resolve, used elsewhere, is unaffected).
 	tr := newTree(t)
 	tr.place(t, "disk2", "Media/a.mkv", "x")
-	cfs := &countingFS{FS: OS}
+	cfs := &countingFS{FS: tr.asPool(OS, "cache")}
 	r := New(cfs, []string{
 		filepath.Join(tr.root, "disk1"),
 		filepath.Join(tr.root, "disk2"),
@@ -362,7 +398,7 @@ func TestResolveStillProbesAllMembers(t *testing.T) {
 	// caller genuinely needs (which member holds the file).
 	tr := newTree(t)
 	tr.place(t, "disk2", "Media/a.mkv", "x")
-	cfs := &countingFS{FS: OS}
+	cfs := &countingFS{FS: tr.asPool(OS, "cache")}
 	r := New(cfs, []string{
 		filepath.Join(tr.root, "disk1"),
 		filepath.Join(tr.root, "disk2"),
@@ -392,5 +428,109 @@ func TestIsPoolPredicateFalseWithNoMembers(t *testing.T) {
 
 	if r.IsPool(filepath.Join(tr.union, "Media/b.mkv")) {
 		t.Error("IsPool = true with no members, want false")
+	}
+}
+
+// A member that is not a mountpoint cannot be a pool. This is the phantom-member
+// shape observed on a real array (#120): /mnt/RecycleBin was a plain directory
+// on rootfs, admitted by Discover and then classified as a pool purely because
+// its name is not "diskN". Classifying it as a pool sizes anything reached
+// through it without the spin-up allowance - the silent undersized head that
+// #113's safety property exists to prevent.
+//
+// The tree here reproduces exactly that: a directory under the root that was
+// never mounted. Every member in newTree is a plain directory, so this asserts
+// the property against the same shape the real host presented.
+func TestPlainDirectoryIsNotAPool(t *testing.T) {
+	tr := newTree(t)
+	phantom := filepath.Join(tr.root, "RecycleBin")
+	if err := os.MkdirAll(phantom, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if got := isPool(OS, phantom); got {
+		t.Errorf("isPool(%s) = true, want false: a plain directory is not a mountpoint "+
+			"and therefore cannot be a pool", phantom)
+	}
+}
+
+// errMountFS reports every mountpoint probe as UNDETERMINED.
+type errMountFS struct{ FS }
+
+func (errMountFS) IsMountpoint(string) (bool, error) {
+	return false, errors.New("no /sys, no device numbers, nothing")
+}
+
+// An undetermined mountpoint answer must resolve toward the ARRAY, never toward
+// the pool. This is the asymmetry the whole placement path is built on: a wrong
+// "not a pool" spends cache budget on a file that did not need it, while a wrong
+// "pool" sizes a spinning disk with no spin-up allowance and silently
+// reintroduces the stall the plugin exists to remove.
+//
+// The shapes that land here are real: a container without the member mounted, a
+// filesystem that cannot report device numbers, a path that vanished between
+// discovery and classification.
+func TestUndeterminedMountpointIsNotAPool(t *testing.T) {
+	tr := newTree(t)
+	// Name it like a pool AND make it a genuine mount root, so the ONLY reason
+	// to answer false is the probe failing. Without this the test would pass
+	// for the wrong reason.
+	member := filepath.Join(tr.root, "cache")
+
+	if got := isPool(tr.asPool(OS, "cache"), member); !got {
+		t.Fatalf("precondition: isPool(%s) = false with a working probe, so this "+
+			"test cannot show the error path is what rejects it", member)
+	}
+
+	if got := isPool(errMountFS{FS: OS}, member); got {
+		t.Errorf("isPool(%s) = true when the mountpoint probe errored, want false: "+
+			"an undetermined answer must resolve toward the array", member)
+	}
+}
+
+// countingMountFS records every IsMountpoint probe.
+type countingMountFS struct {
+	FS
+	probes int
+}
+
+func (c *countingMountFS) IsMountpoint(name string) (bool, error) {
+	c.probes++
+	return c.FS.IsMountpoint(name)
+}
+
+// Pool classification must happen ONCE, at construction, and never from the
+// per-file path. #120 is explicit that device resolution must not reach the
+// per-target call: IsPool and Resolve run per preload target, so classifying on
+// demand would add two Lstat calls per member to every one of them - on a
+// 13-member array roughly 26 extra syscalls per target, against disks the
+// plugin exists to leave asleep.
+//
+// Placement is fixed for the life of a sweep, so a cached answer is also the
+// correct one.
+func TestPoolClassificationHappensOncePerResolver(t *testing.T) {
+	tr := newTree(t)
+	tr.place(t, "cache", "Media/b.mkv", "x")
+	cfs := &countingMountFS{FS: tr.asPool(OS, "cache")}
+	r := New(cfs, []string{
+		filepath.Join(tr.root, "disk1"),
+		filepath.Join(tr.root, "cache"),
+	}, WithUnionRoot(tr.union))
+
+	afterNew := cfs.probes
+	if afterNew == 0 {
+		t.Fatal("New probed no members, so classification is not happening at construction")
+	}
+
+	for range 5 {
+		if !r.IsPool(filepath.Join(tr.union, "Media/b.mkv")) {
+			t.Fatal("IsPool = false for a pool-resident file, want true")
+		}
+	}
+
+	if cfs.probes != afterNew {
+		t.Errorf("IsPool made %d mountpoint probes across 5 calls, want 0: "+
+			"classification must not reach the per-file path",
+			cfs.probes-afterNew)
 	}
 }
