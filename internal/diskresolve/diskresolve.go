@@ -55,15 +55,64 @@ type Location struct {
 
 // FS abstracts the filesystem calls so the resolver is testable without an
 // Unraid array. Stat mirrors os.Stat; ReadDir mirrors os.ReadDir.
+//
+// IsMountpoint reports whether a path is the root of a mounted filesystem. It
+// is part of this interface rather than a free function because the real
+// implementation needs st_dev, which os.FileInfo does not expose portably.
+//
+// The bool/error split carries meaning: an error means UNDETERMINED, never
+// "no". Callers must resolve an undetermined answer toward the array (see
+// isPool), because a wrong "not a pool" only spends cache budget while a wrong
+// "pool" silently reintroduces the spin-up stall.
 type FS interface {
 	Stat(name string) (os.FileInfo, error)
 	ReadDir(name string) ([]os.DirEntry, error)
+	IsMountpoint(name string) (bool, error)
 }
 
 type osFS struct{}
 
 func (osFS) Stat(name string) (os.FileInfo, error)      { return os.Stat(name) }
 func (osFS) ReadDir(name string) ([]os.DirEntry, error) { return os.ReadDir(name) }
+
+// IsMountpoint compares a directory's device number against its parent's. A
+// mount root sits on a different device from the directory it is mounted over,
+// which is the same test mountpoint(1) makes and needs no privileges, no /proc,
+// and no /sys - so it works in a container and on a non-Unraid host.
+//
+// It FOLLOWS symlinks (os.Stat, not os.Lstat), which mountpoint(1) also does. A
+// symlink's own inode lives on the directory's filesystem, so lstat-ing one
+// compares the link against its parent and reports false for a member that
+// symlinks to a genuine mount root - classifying a real pool as array-backed.
+// Discover does not admit symlinks today (ReadDir's IsDir is false for one), so
+// nothing on the shipped path reaches this, but New accepts members from any
+// caller and following is both correct and free.
+//
+// The root directory is always a mountpoint and is reported as such without
+// consulting a parent, since filepath.Dir("/") is "/".
+func (osFS) IsMountpoint(name string) (bool, error) {
+	st, err := os.Stat(name)
+	if err != nil {
+		return false, err
+	}
+	parent := filepath.Dir(name)
+	if parent == name {
+		return true, nil
+	}
+	pst, err := os.Stat(parent)
+	if err != nil {
+		return false, err
+	}
+	dev, ok := deviceOf(st)
+	if !ok {
+		return false, fmt.Errorf("device number unavailable for %s", name)
+	}
+	pdev, ok := deviceOf(pst)
+	if !ok {
+		return false, fmt.Errorf("device number unavailable for %s", parent)
+	}
+	return dev != pdev, nil
+}
 
 // OS is the real filesystem.
 var OS FS = osFS{}
@@ -73,6 +122,16 @@ type Resolver struct {
 	fs        FS
 	members   []string
 	unionRoot string
+	// pools is the set of members that classify as pools, computed ONCE in New.
+	//
+	// Classification now touches the filesystem (isPool confirms the member is
+	// a mount root), and both IsPool and Resolve are per-target calls, so
+	// classifying on demand would put two Lstat calls per member into the
+	// per-file path - on a 13-member array roughly 26 extra syscalls for every
+	// preload target. Placement is fixed for the life of a sweep, so this is
+	// decided at construction and read thereafter. #120 is explicit that device
+	// resolution must not reach the per-file path.
+	pools map[string]bool
 }
 
 // Option configures a Resolver.
@@ -91,6 +150,11 @@ func New(fs FS, members []string, opts ...Option) *Resolver {
 	r := &Resolver{fs: fs, members: append([]string(nil), members...), unionRoot: "/mnt/user"}
 	for _, o := range opts {
 		o(r)
+	}
+	// Classify once, after options are applied so a test's FS is in place.
+	r.pools = make(map[string]bool, len(r.members))
+	for _, m := range r.members {
+		r.pools[m] = isPool(fs, m)
 	}
 	return r
 }
@@ -142,14 +206,49 @@ func Discover(fs FS, mntRoot string) ([]string, error) {
 //     member. The inode-identity check does NOT catch this: an alias of an array
 //     file genuinely IS the same inode, so it matches.
 //
-// isPool cannot see rotational status from a name, and reading it (via
-// /sys/block/*/queue/rotational) would mean mapping a mount point back to its
-// backing devices, which is a larger change than this classification warrants.
-// There is deliberately no config escape hatch either. The mitigation is
-// visibility: PoolMembers is logged at startup (see cmd/preloadd/placement.go),
-// so an operator sees exactly which members were classified as pools and can
-// spot either shape in one line.
-func isPool(member string) bool {
+// The SECOND shape is now PARTLY rejected: a member that is not the root of a
+// mounted filesystem cannot be a pool, whatever it is named. That check needs no
+// /sys walk and no device mapping, only a comparison of device numbers against
+// the parent directory, so it is cheap enough to run at startup. It was observed
+// on a real array, where /mnt/RecycleBin - a plain directory on rootfs - was
+// classified as a pool purely because its name is not "diskN".
+//
+// It rejects only the NON-MOUNTPOINT case. A bind mount or any other genuine
+// mount that reaches array content IS a mount root, so it still passes here and
+// is still misclassified. Rejecting that needs the rotational status of the
+// backing devices, the same thing the HDD-backed pool below needs.
+//
+// The FIRST shape (an HDD-backed pool) still stands: a pool of spinning disks
+// is a genuine mountpoint, so this check passes it through and it remains
+// misclassified. Rejecting it needs the rotational status of the backing
+// devices, which is the larger change #120 tracks. There is deliberately no
+// config escape hatch. The mitigation stays visibility: PoolMembers is logged
+// at startup (see cmd/preloadd/placement.go), so an operator sees exactly which
+// members were classified as pools and can spot that shape in one line.
+//
+// UNCERTAINTY RESOLVES TOWARD THE ARRAY. An unreadable path, a filesystem that
+// cannot report device numbers, a container without the member mounted - all
+// answer "not a pool", never "pool". A wrong "not a pool" only spends cache
+// budget on a file that did not need it; a wrong "pool" silently reintroduces
+// the spin-up stall this project exists to remove, and that asymmetry decides
+// every uncertain case.
+func isPool(fs FS, member string) bool {
+	if !nameLooksLikePool(member) {
+		return false
+	}
+	// A pool is a mounted filesystem. A plain directory that merely sits under
+	// the mount root is not, however it is named.
+	mounted, err := fs.IsMountpoint(member)
+	if err != nil || !mounted {
+		return false
+	}
+	return true
+}
+
+// nameLooksLikePool reports whether a member's NAME is not that of a numbered
+// array disk. It is the cheap first pass: array disks are diskN, so anything
+// else is a pool CANDIDATE, which isPool then confirms against the filesystem.
+func nameLooksLikePool(member string) bool {
 	base := filepath.Base(member)
 	suffix, ok := strings.CutPrefix(base, "disk")
 	if !ok || suffix == "" {
@@ -222,7 +321,7 @@ func (r *Resolver) IsPool(unionPath string) bool {
 func (r *Resolver) poolMembers() []string {
 	var pools []string
 	for _, m := range r.members {
-		if isPool(m) {
+		if r.pools[m] {
 			pools = append(pools, m)
 		}
 	}
@@ -269,7 +368,7 @@ func (r *Resolver) resolveAmong(unionPath, unionRoot string, members []string) (
 			// treating one as the answer would bind the caller to the wrong disk.
 			continue
 		}
-		return Location{Member: m, Path: cand, Pool: isPool(m)}, nil
+		return Location{Member: m, Path: cand, Pool: r.pools[m]}, nil
 	}
 	return Location{}, fmt.Errorf("%q: %w", unionPath, ErrUnresolved)
 }

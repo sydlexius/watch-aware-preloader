@@ -32,11 +32,36 @@ func capturingLog() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
+// mountedFS presents chosen directories as mount roots.
+//
+// diskresolve classifies a member as a pool only when it is BOTH named unlike
+// an array disk AND is the root of a mounted filesystem (#120: a plain
+// directory under /mnt is not a pool, however it is named). mntTree builds
+// plain directories inside one t.TempDir(), so nothing in it is a real mount
+// root and no member would classify as a pool. This supplies that single
+// unrepresentable fact so the pool path stays reachable in a unit test;
+// everything else about the tree stays real.
+type mountedFS struct {
+	diskresolve.FS
+	mounts map[string]bool
+}
+
+func (m *mountedFS) IsMountpoint(name string) (bool, error) { return m.mounts[name], nil }
+
+// poolFS makes the named members under root read as mount roots.
+func poolFS(root string, members ...string) diskresolve.FS {
+	mounts := make(map[string]bool, len(members))
+	for _, m := range members {
+		mounts[filepath.Join(root, m)] = true
+	}
+	return &mountedFS{FS: diskresolve.OS, mounts: mounts}
+}
+
 func TestPoolResidentOptsWithMembers(t *testing.T) {
 	root := mntTree(t, "user", "disk1", "disk2", "cache")
 	log, buf := capturingLog()
 
-	opts := poolResidentOpts(diskresolve.OS, root, log)
+	opts := poolResidentOpts(poolFS(root, "cache"), root, log)
 	if len(opts) != 1 {
 		t.Fatalf("len(opts) = %d, want 1 - placement resolution should be enabled", len(opts))
 	}
@@ -140,7 +165,7 @@ func TestPoolResidentOptsPredicateAnswersTrue(t *testing.T) {
 		t.Fatalf("link: %v", err)
 	}
 
-	got := poolResidentFunc(diskresolve.OS, root, quietLog())
+	got := poolResidentFunc(poolFS(root, "cache"), root, quietLog())
 	if got == nil {
 		t.Fatal("no pool-resident predicate was produced")
 	}
