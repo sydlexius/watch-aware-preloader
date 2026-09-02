@@ -80,10 +80,18 @@ func (osFS) ReadDir(name string) ([]os.DirEntry, error) { return os.ReadDir(name
 // which is the same test mountpoint(1) makes and needs no privileges, no /proc,
 // and no /sys - so it works in a container and on a non-Unraid host.
 //
+// It FOLLOWS symlinks (os.Stat, not os.Lstat), which mountpoint(1) also does. A
+// symlink's own inode lives on the directory's filesystem, so lstat-ing one
+// compares the link against its parent and reports false for a member that
+// symlinks to a genuine mount root - classifying a real pool as array-backed.
+// Discover does not admit symlinks today (ReadDir's IsDir is false for one), so
+// nothing on the shipped path reaches this, but New accepts members from any
+// caller and following is both correct and free.
+//
 // The root directory is always a mountpoint and is reported as such without
 // consulting a parent, since filepath.Dir("/") is "/".
 func (osFS) IsMountpoint(name string) (bool, error) {
-	st, err := os.Lstat(name)
+	st, err := os.Stat(name)
 	if err != nil {
 		return false, err
 	}
@@ -91,7 +99,7 @@ func (osFS) IsMountpoint(name string) (bool, error) {
 	if parent == name {
 		return true, nil
 	}
-	pst, err := os.Lstat(parent)
+	pst, err := os.Stat(parent)
 	if err != nil {
 		return false, err
 	}
@@ -198,12 +206,17 @@ func Discover(fs FS, mntRoot string) ([]string, error) {
 //     member. The inode-identity check does NOT catch this: an alias of an array
 //     file genuinely IS the same inode, so it matches.
 //
-// The SECOND shape is now rejected: a member that is not the root of a mounted
-// filesystem cannot be a pool, whatever it is named. That check needs no /sys
-// walk and no device mapping, only a comparison of device numbers against the
-// parent directory, so it is cheap enough to run at startup. It was observed on
-// a real array, where /mnt/RecycleBin - a plain directory on rootfs - was
+// The SECOND shape is now PARTLY rejected: a member that is not the root of a
+// mounted filesystem cannot be a pool, whatever it is named. That check needs no
+// /sys walk and no device mapping, only a comparison of device numbers against
+// the parent directory, so it is cheap enough to run at startup. It was observed
+// on a real array, where /mnt/RecycleBin - a plain directory on rootfs - was
 // classified as a pool purely because its name is not "diskN".
+//
+// It rejects only the NON-MOUNTPOINT case. A bind mount or any other genuine
+// mount that reaches array content IS a mount root, so it still passes here and
+// is still misclassified. Rejecting that needs the rotational status of the
+// backing devices, the same thing the HDD-backed pool below needs.
 //
 // The FIRST shape (an HDD-backed pool) still stands: a pool of spinning disks
 // is a genuine mountpoint, so this check passes it through and it remains

@@ -66,11 +66,13 @@ than by relying on the cache assumption: it probes only the members already
 known to be pools, never array members, so the cost is a handful of stats
 against disks that, on a stock array, never spin down regardless of dentry-cache
 state. "Known to be pools" means the member is named unlike an array disk AND is the
-root of a mounted filesystem, so a stray `/mnt` directory aliasing array content
-is now rejected before it is ever probed (#120). An HDD-backed pool is a genuine
-mountpoint and so still classifies as a pool, and can still spin a disk up; see
-the assumption stated in full on `isPool`. Startup logs the pool members by name
-so that remaining case is visible rather than silent.
+root of a mounted filesystem, so a stray `/mnt` directory that was never mounted
+is now rejected before it is ever probed (#120). That covers only the
+non-mountpoint case: a bind mount aliasing array content is a genuine mount
+root, and an HDD-backed pool is one too, so both still classify as pools and can
+still spin a disk up; see the assumption stated in full on `isPool`. Startup
+logs the pool members by name so those remaining cases are visible rather than
+silent.
 `Resolve` still probes the full member list when a caller genuinely
 needs to know which array disk holds a file; that path retains the original,
 now-unverified cost claim and should not be used from a placement-only check.

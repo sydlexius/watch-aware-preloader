@@ -534,3 +534,63 @@ func TestPoolClassificationHappensOncePerResolver(t *testing.T) {
 			cfs.probes-afterNew)
 	}
 }
+
+// IsMountpoint must FOLLOW symlinks, as mountpoint(1) does.
+//
+// A symlink's own inode lives on the filesystem holding the directory entry, so
+// lstat-ing one compares the link against its parent and finds them equal - a
+// member symlinked to a genuine mount root would read as "not a mountpoint" and
+// a real pool would be classified as array-backed. That is the wrong direction
+// for this path to be wrong in (Copilot, PR #136).
+//
+// Discover does not admit symlinks today, so nothing on the shipped path
+// reaches this; New accepts members from any caller, which is why it is still
+// worth asserting.
+func TestIsMountpointFollowsSymlinks(t *testing.T) {
+	root := t.TempDir()
+
+	// Find a real mount root whose PARENT is on a different device, so the
+	// device comparison is meaningful. The symlink's parent is the temp dir, so
+	// the target itself must genuinely differ from what it is mounted over.
+	var realMount string
+	for _, c := range []string{"/dev", "/proc", "/sys", "/"} {
+		if ok, err := OS.IsMountpoint(c); err == nil && ok {
+			realMount = c
+			break
+		}
+	}
+	if realMount == "" {
+		t.Skip("no mount root available to point a symlink at")
+	}
+
+	link := filepath.Join(root, "link-to-mount")
+	if err := os.Symlink(realMount, link); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	// Precondition: lstat semantics get this WRONG, which is what makes the
+	// assertion below evidence that the probe follows the link rather than a
+	// coincidence of the temp dir's device.
+	lst, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	pst, err := os.Lstat(filepath.Dir(link))
+	if err != nil {
+		t.Fatalf("lstat parent: %v", err)
+	}
+	ldev, ok1 := deviceOf(lst)
+	pdev, ok2 := deviceOf(pst)
+	if ok1 && ok2 && ldev != pdev {
+		t.Skip("symlink inode is not on its parent's device; this platform cannot show the distinction")
+	}
+
+	got, err := OS.IsMountpoint(link)
+	if err != nil {
+		t.Fatalf("IsMountpoint(%s): %v", link, err)
+	}
+	if !got {
+		t.Errorf("IsMountpoint(symlink -> %s) = false, want true: the probe must "+
+			"follow symlinks or a symlinked pool member reads as array-backed", realMount)
+	}
+}
