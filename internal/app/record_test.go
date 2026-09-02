@@ -14,7 +14,6 @@ import (
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/pathmap"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 	"github.com/doxazo-net/watch-aware-preloader/internal/status"
@@ -60,7 +59,7 @@ func TestBuildStatusRecordsError(t *testing.T) {
 
 func TestSweepAndRecordWriteFailureIsNonFatal(t *testing.T) {
 	p := &stubProvider{
-		users:   []emby.User{{ID: "1", Name: "jesse"}},
+		users:   []core.User{{ID: "1", Name: "jesse"}},
 		resume:  map[string][]core.MediaItem{"1": {{ID: "r1", ServerPath: "/x/r1.mkv", BitrateBps: 8_000_000}}},
 		nextUp:  map[string][]core.MediaItem{},
 		latest:  map[string][]core.MediaItem{},
@@ -104,7 +103,7 @@ func TestSweepAndRecordWriteFailureIsNonFatal(t *testing.T) {
 // because the sweep never gets that far.
 type failingUsersProvider struct{ *stubProvider }
 
-func (failingUsersProvider) Users(context.Context) ([]emby.User, error) {
+func (failingUsersProvider) Users(context.Context) ([]core.User, error) {
 	return nil, errors.New("server unreachable")
 }
 

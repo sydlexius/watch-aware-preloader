@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
+	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/secrets"
 )
@@ -90,7 +91,7 @@ type libraryJSON struct {
 
 // writeUsersJSON emits the users as `[{"id","name"}]`, always a JSON array
 // (never null when empty) so a strict UI consumer can iterate it directly.
-func writeUsersJSON(users []emby.User, w io.Writer) error {
+func writeUsersJSON(users []core.User, w io.Writer) error {
 	out := make([]userJSON, 0, len(users))
 	for _, u := range users {
 		out = append(out, userJSON{ID: u.ID, Name: u.Name})
@@ -100,7 +101,7 @@ func writeUsersJSON(users []emby.User, w io.Writer) error {
 
 // writeLibrariesJSON emits the libraries as `[{"id","name","type"}]`, always a
 // JSON array (never null when empty).
-func writeLibrariesJSON(libs []emby.Library, w io.Writer) error {
+func writeLibrariesJSON(libs []core.Library, w io.Writer) error {
 	out := make([]libraryJSON, 0, len(libs))
 	for _, l := range libs {
 		out = append(out, libraryJSON{ID: l.ID, Name: l.Name, Type: l.Type})

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/pathmap"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 )
@@ -23,7 +22,7 @@ func TestRunOnceExcludesNowPlayingEndToEnd(t *testing.T) {
 	// (emby.embyItem.toCore). Ranking keys tier order off it, so an unstamped
 	// item belongs to no user and contributes nothing.
 	p := &stubProvider{
-		users:   []emby.User{{ID: "1", Name: "jesse"}},
+		users:   []core.User{{ID: "1", Name: "jesse"}},
 		resume:  map[string][]core.MediaItem{"1": {{ID: "r1", ServerPath: "/x/r1.mkv", BitrateBps: 8_000_000, UserID: "1"}}},
 		nextUp:  map[string][]core.MediaItem{"1": {{ID: "playing", ServerPath: "/x/p.mkv", BitrateBps: 8_000_000, UserID: "1"}}},
 		latest:  map[string][]core.MediaItem{},

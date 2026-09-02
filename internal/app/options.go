@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
+	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 	"github.com/doxazo-net/watch-aware-preloader/internal/scorer"
 )
 
@@ -25,7 +25,7 @@ type SweepOptions struct {
 	// Users is authoritative for enrollment ITERATION and Ranks for ELIGIBILITY,
 	// so Ranks must be resolved FROM this same list: a user in Ranks but absent
 	// from Users is never iterated and so silently contributes nothing.
-	Users            []emby.User
+	Users            []core.User
 	EnabledLibraries []string           // enabled library IDs, empty = all libraries (library-scope filter)
 	Tiers            config.TiersConfig // per-tier max-items dials
 	Ranks            scorer.RankOpts    // resolved enrollment, user rank, and per-user tier order
@@ -39,7 +39,7 @@ type SweepOptions struct {
 // budget is sampled from available RAM at sweep time, mode from the run path).
 // It takes the provider's user list because rank resolution must map configured
 // names to IDs.
-func SweepOptionsFromConfig(cfg *config.Config, users []emby.User, budget int64, mode string, log *slog.Logger) SweepOptions {
+func SweepOptionsFromConfig(cfg *config.Config, users []core.User, budget int64, mode string, log *slog.Logger) SweepOptions {
 	return SweepOptions{
 		Users:            users,
 		EnabledLibraries: cfg.Libraries.Enabled,
