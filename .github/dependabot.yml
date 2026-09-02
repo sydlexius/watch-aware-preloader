@@ -35,3 +35,39 @@ updates:
       actions-all:
         patterns:
           - "*"
+
+  # Dev-only PHP tooling (PHPStan, PHP-CS-Fixer). Nothing from vendor/ ships in
+  # the plugin .txz, so these bumps affect CI and developer workstations only.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - php
+    groups:
+      php-dev-tooling:
+        patterns:
+          - "*"
+
+  # Dev-only JS tooling (ESLint, jsdom). The settings page loads plain
+  # script-scope .js with no bundler, so node_modules/ ships nothing either.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      js-dev-tooling:
+        patterns:
+          - "*"
