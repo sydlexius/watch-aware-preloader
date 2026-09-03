@@ -172,6 +172,16 @@ buffer.
 
 ## Status
 
-The resolver ships as a tested package but has **no consumer yet** - wiring it
-into `HeadBytes` is action 3 above and belongs in its own change, so that this
-spike lands as evidence rather than as an unreviewed behavior change.
+Action 3 above is **shipped**. `IsPool` is wired into sizing (#113, PR #119) and
+the classified pool members are logged at startup, so a file on a pool is sized
+with no spin-up allowance and an operator can see which members were classified
+that way. This section previously said the resolver had no consumer, which was
+true when the spike landed and has not been since.
+
+Classification itself has been tightened twice on top of that wiring: a member
+that is not a mount root is not a pool (#136), and a member whose backing
+devices rotate is not a pool either (#120). Both were prompted by evidence from
+a live array rather than by review of the code alone.
+
+Actions 1 and 2 remain open - see #112 for the `MaxHeadMB` question, which is a
+RAM tradeoff rather than a code change.

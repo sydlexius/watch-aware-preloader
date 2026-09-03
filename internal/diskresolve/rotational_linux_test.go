@@ -680,3 +680,48 @@ func TestUnreadableBtrfsDeviceListIsUndetermined(t *testing.T) {
 			"SSD-only list while an unreadable one holds the pool's spinning disk")
 	}
 }
+
+// A non-canonical member path must still match its own mountinfo entry.
+//
+// The kernel writes canonical mount points, so a raw string comparison works
+// for anything Discover produces - but New accepts members from any caller, and
+// a trailing slash or a doubled separator would then report undetermined for a
+// genuine pool. That fails safe, and it also makes this probe disagree with
+// IsMountpoint, which goes through os.Stat and accepts those forms: one
+// predicate answering from two different notions of the same path is the seam
+// where the next inconsistency hides.
+func TestNonCanonicalMemberPathStillMatches(t *testing.T) {
+	tr := newSysTree(t)
+	tr.disk(t, "nvme0n1", 0)
+	tr.mounts(t, mountLine("/mnt/cache", "xfs", "/dev/nvme0n1"))
+
+	for _, member := range []string{"/mnt/cache", "/mnt/cache/", "/mnt//cache", "/mnt/./cache"} {
+		got, err := tr.p.AllNonRotational(member)
+		if err != nil {
+			t.Errorf("AllNonRotational(%q) = error %v, want a definite answer: the "+
+				"path names the same mount as its canonical form", member, err)
+			continue
+		}
+		if !got {
+			t.Errorf("AllNonRotational(%q) = false, want true: it names an "+
+				"SSD-backed mount", member)
+		}
+	}
+}
+
+// A mountinfo entry written non-canonically must match a canonical member too,
+// so the cleaning is applied to BOTH sides rather than only the caller's.
+func TestNonCanonicalMountinfoEntryStillMatches(t *testing.T) {
+	tr := newSysTree(t)
+	tr.disk(t, "nvme0n1", 0)
+	tr.mounts(t, mountLine("/mnt/cache/", "xfs", "/dev/nvme0n1"))
+
+	got, err := tr.p.AllNonRotational("/mnt/cache")
+	if err != nil {
+		t.Fatalf("AllNonRotational: unexpected error %v", err)
+	}
+	if !got {
+		t.Error(`AllNonRotational("/mnt/cache") = false against a mountinfo entry ` +
+			`written as "/mnt/cache/", want true: both sides must be cleaned`)
+	}
+}

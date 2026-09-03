@@ -113,6 +113,17 @@ func (p sysProber) backingDevices(member string) ([]string, error) {
 // mount over the same directory shadows an earlier one, so the last entry is
 // what a read of that path actually reaches.
 func (p sysProber) mountSource(member string) (fstype, source string, err error) {
+	// Compare CLEANED paths. The kernel writes canonical mount points, but this
+	// probe accepts a member from any caller, and a trailing slash or a doubled
+	// separator would otherwise fail to match the member's own entry - reporting
+	// undetermined for a genuine pool. That fails safe (the member is demoted to
+	// array-backed and merely costs cache budget), but it makes this probe
+	// disagree with IsMountpoint, which goes through os.Stat and accepts those
+	// forms, so one predicate would answer from two different notions of the
+	// same path. Discover produces canonical members today, so nothing on the
+	// shipped path reaches it.
+	member = filepath.Clean(member)
+
 	f, err := os.Open(p.mountinfo)
 	if err != nil {
 		return "", "", errUndetermined
@@ -137,7 +148,7 @@ func (p sysProber) mountSource(member string) (fstype, source string, err error)
 			continue
 		}
 		// Mount points are octal-escaped in mountinfo (a space is \040).
-		if unescapeMountinfo(lf[4]) != member {
+		if filepath.Clean(unescapeMountinfo(lf[4])) != member {
 			continue
 		}
 		fstype, source, found = rf[0], unescapeMountinfo(rf[1]), true
