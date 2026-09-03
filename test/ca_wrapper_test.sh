@@ -59,9 +59,22 @@ root = ET.parse(wrapper).getroot()
 if root.tag != "Plugin":
     sys.exit(f"FAIL: wrapper root is <{root.tag}>, want <Plugin>")
 
-for field in ("Name", "PluginURL", "Overview", "Support", "Project", "Category"):
+# Two tiers, kept distinct because they fail differently. CA REQUIRES the first
+# set (the starter's own "Required fields" block is exactly these four, above its
+# "Optional entries" marker), so a submission missing one is rejected.
+# PluginAuthor belongs here and was missed in the first version of this gate:
+# 300 of the 311 listed plugins carry it.
+for field in ("Name", "Overview", "PluginURL", "PluginAuthor"):
     if not (root.findtext(field) or "").strip():
-        sys.exit(f"FAIL: wrapper is missing a non-empty <{field}>")
+        sys.exit(f"FAIL: wrapper is missing a non-empty <{field}> (required by CA)")
+
+# CA treats these as optional, but this repo always ships them: a listing without
+# a support link, a project link, or a category is worse for a user reading the
+# catalog, and dropping one silently is the kind of regression a gate should
+# catch. Asserted separately so the failure message does not claim CA rejects it.
+for field in ("Support", "Project", "Category"):
+    if not (root.findtext(field) or "").strip():
+        sys.exit(f"FAIL: wrapper is missing a non-empty <{field}> (repo convention)")
 
 raw = open(tmpl, encoding="utf-8").read()
 
