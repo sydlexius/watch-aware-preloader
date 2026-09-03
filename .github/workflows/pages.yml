@@ -1,0 +1,93 @@
+name: Pages
+
+# Builds the documentation site on every PR and deploys it on push to main.
+#
+# The build runs on pull_request WITHOUT deploying, so a broken site fails at
+# review time rather than after merge. properdocs.yml sets `strict: true` plus
+# validation.links.anchors, which turns a link to a missing page OR a missing
+# heading into a build failure - the gate that keeps a docs slice from shipping
+# links to pages a later slice has not written yet. Note it validates INTERNAL
+# links only; an absolute URL is never checked by anything here.
+#
+# NOTE: deployment requires GitHub Pages to be enabled for this repository with
+# the source set to "GitHub Actions" (Settings -> Pages). Until then the build
+# job passes and the deploy job fails; it is a one-time repository setting.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/site/**'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'docs/site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/site/requirements.txt
+
+      - name: Install ProperDocs and plugins
+        # --require-hashes refuses to install any artifact whose SHA-256 does
+        # not match the recorded hash, so a typosquat or a compromised PyPI
+        # release cannot substitute a different wheel under the same version
+        # string (OpenSSF Scorecard PinnedDependenciesID). Source of truth for
+        # the top-level pins is docs/site/requirements.in; regenerate the
+        # lockfile with `uv pip compile --generate-hashes` after editing it.
+        run: pip install --require-hashes -r docs/site/requirements.txt
+
+      - name: Build site
+        run: properdocs build --config-file docs/site/properdocs.yml
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/site/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write # deploy the uploaded artifact
+      id-token: write # OIDC token the deploy action exchanges for Pages access
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # configure-pages calls the Pages API, so it needs the pages permission
+      # and a Pages-enabled repository. It lives HERE rather than in the build
+      # job for both reasons: build runs with contents: read only, and a build
+      # that reached the API would fail on main whenever Pages is off - the
+      # opposite of the "build passes, deploy fails" behaviour this workflow
+      # documents.
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

@@ -9,7 +9,12 @@ import globals from 'globals';
 // is left off for that reason.
 export default [
     {
-        ignores: ['node_modules/**', 'vendor/**', 'bin/**', 'release/**'],
+        // docs/site/site is the BUILT documentation site: mkdocs-material's
+        // own bundled JS, not this project's code to lint. It is gitignored,
+        // but eslint walks the working tree rather than the index, so an
+        // ignore entry is required here too or a local docs build breaks the
+        // JS lint gate with hundreds of errors in vendored bundles.
+        ignores: ['node_modules/**', 'vendor/**', 'bin/**', 'release/**', 'docs/site/site/**'],
     },
     {
         // This config file itself is an ES module; everything else in the repo
