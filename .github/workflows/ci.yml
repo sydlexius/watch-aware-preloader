@@ -133,6 +133,8 @@ jobs:
         run: bash test/rc_preloadd_estimate_test.sh
       - name: .plg render CDATA safety test (#23)
         run: bash test/plg_render_test.sh
+      - name: Community Applications wrapper test (#4)
+        run: bash test/ca_wrapper_test.sh
       - name: JS unit tests (test/*_test.js)
         run: |
           shopt -s nullglob

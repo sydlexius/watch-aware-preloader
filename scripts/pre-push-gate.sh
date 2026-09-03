@@ -166,7 +166,7 @@ else
     echo "SKIP (warning): php not installed - the PHP unit tests did not run"
 fi
 
-for t in test/rc_preloadd_render_test.sh test/rc_preloadd_estimate_test.sh test/plg_render_test.sh; do
+for t in test/rc_preloadd_render_test.sh test/rc_preloadd_estimate_test.sh test/plg_render_test.sh test/ca_wrapper_test.sh; do
     [ -e "$t" ] || continue
     echo "== $t =="
     bash "$t"
