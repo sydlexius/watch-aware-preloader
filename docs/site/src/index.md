@@ -74,6 +74,10 @@ therefore need the file tail warmed as well as the head, which the plugin does.
 - **Budgeted.** You cap it at a share of RAM. Page cache is reclaimable, so it
   never starves applications: the kernel evicts it under memory pressure.
 
+For the mechanism in detail - how sizing is derived, why resume needs the file
+tail, and how pool-resident content is treated - see
+[How it works](how-it-works.md).
+
 ## What it is
 
 - A native Unraid `.plg` plugin: one static Go binary (`preloadd`) plus a PHP

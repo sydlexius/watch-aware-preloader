@@ -17,7 +17,9 @@ Your media server API key is a secret and is deliberately kept out of
 - **A secrets file**, by default
   `/boot/config/plugins/watch-aware-preloader/secrets.toml`, under
   `[server].api_key`. The settings page writes this for you when you paste a key
-  into the write-only API-key field.
+  into the write-only API-key field. The repository ships
+  [`secrets.example.toml`](https://github.com/sydlexius/watch-aware-preloader/blob/main/secrets.example.toml)
+  showing the expected shape, for anyone configuring it by hand.
 - **The `EMBY_API_KEY` environment variable**, which overrides the file.
 
 `config.toml` must not contain `api_key`. The engine refuses to start if it does,
