@@ -304,6 +304,18 @@ func (m *mountedFS) IsMountpoint(name string) (bool, error) {
 	return m.mounts[name], nil
 }
 
+// AllNonRotational is faked for the same reason as IsMountpoint: a t.TempDir()
+// subdirectory has no backing block device to read queue/rotational from, so
+// the real prober correctly answers UNDETERMINED and no member could ever
+// classify as a pool. A member this fake presents as a mount root is presented
+// as SSD-backed too, which together are what "pool" means.
+func (m *mountedFS) AllNonRotational(name string) (bool, error) {
+	if !m.mounts[name] {
+		return false, errUndetermined
+	}
+	return true, nil
+}
+
 // asPool makes the named members read as mount roots, so a resolver built on
 // the returned FS classifies them as pools.
 func (tr tree) asPool(base FS, members ...string) FS {
@@ -488,10 +500,21 @@ func TestUndeterminedMountpointIsNotAPool(t *testing.T) {
 	}
 }
 
-// countingMountFS records every IsMountpoint probe.
+// countingMountFS records every classification probe - BOTH of them.
+//
+// Counting only IsMountpoint left the more expensive probe unguarded: adding an
+// AllNonRotational call to the per-file path put a /proc/self/mountinfo parse
+// and a sysfs walk on every resolved target and the whole suite stayed green.
+// The rotational probe is the one #120 is explicit about keeping off that path,
+// so it is the one that most needs counting.
 type countingMountFS struct {
 	FS
 	probes int
+}
+
+func (c *countingMountFS) AllNonRotational(name string) (bool, error) {
+	c.probes++
+	return c.FS.AllNonRotational(name)
 }
 
 func (c *countingMountFS) IsMountpoint(name string) (bool, error) {
@@ -529,9 +552,24 @@ func TestPoolClassificationHappensOncePerResolver(t *testing.T) {
 	}
 
 	if cfs.probes != afterNew {
-		t.Errorf("IsPool made %d mountpoint probes across 5 calls, want 0: "+
+		t.Errorf("IsPool made %d classification probes across 5 calls, want 0: "+
 			"classification must not reach the per-file path",
 			cfs.probes-afterNew)
+	}
+
+	// Resolve is the other per-target entry point and must be just as quiet.
+	// Without this a probe could migrate into resolveAmong - shared by both -
+	// and only IsPool would notice.
+	beforeResolve := cfs.probes
+	for range 5 {
+		if _, err := r.Resolve(filepath.Join(tr.union, "Media/b.mkv")); err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+	}
+	if cfs.probes != beforeResolve {
+		t.Errorf("Resolve made %d classification probes across 5 calls, want 0: "+
+			"device resolution must not reach the per-file path",
+			cfs.probes-beforeResolve)
 	}
 }
 
@@ -592,5 +630,78 @@ func TestIsMountpointFollowsSymlinks(t *testing.T) {
 	if !got {
 		t.Errorf("IsMountpoint(symlink -> %s) = false, want true: the probe must "+
 			"follow symlinks or a symlinked pool member reads as array-backed", realMount)
+	}
+}
+
+// rotationalFS presents members as genuine mount roots whose backing devices
+// SPIN. That is the HDD-backed pool from #120: it passes the name check and the
+// mountpoint check, so rotational status is the only thing that can reject it.
+type rotationalFS struct {
+	FS
+	mounts map[string]bool
+}
+
+func (r *rotationalFS) IsMountpoint(name string) (bool, error) { return r.mounts[name], nil }
+
+func (r *rotationalFS) AllNonRotational(string) (bool, error) { return false, nil }
+
+// An HDD-backed pool is a genuine mount root and is NOT a pool.
+//
+// This asserts what isPool ANSWERS, not that a prober exists: deleting the
+// rotational check from isPool leaves every prober test passing, because those
+// exercise the prober directly. Confirmed by mutation - removing the call makes
+// this test fail and nothing else.
+func TestRotationalMountIsNotAPool(t *testing.T) {
+	tr := newTree(t)
+	member := filepath.Join(tr.root, "archive")
+
+	// Precondition: with SSD-backed storage the same member IS a pool, so a
+	// failure below is attributable to rotational status and nothing else.
+	if got := isPool(tr.asPool(OS, "archive"), member); !got {
+		t.Fatalf("precondition: isPool(%s) = false even when non-rotational, so this "+
+			"test cannot show that spin status is what rejects it", member)
+	}
+
+	spinning := &rotationalFS{FS: OS, mounts: map[string]bool{member: true}}
+	if got := isPool(spinning, member); got {
+		t.Errorf("isPool(%s) = true for a mount root backed by spinning disks, want false: "+
+			"a pool of HDDs spins down like an array disk and needs the full spin-up allowance", member)
+	}
+}
+
+// errRotationalFS reports every rotational probe as UNDETERMINED while
+// presenting the member as a genuine mount root.
+type errRotationalFS struct {
+	FS
+	mounts map[string]bool
+}
+
+func (e *errRotationalFS) IsMountpoint(name string) (bool, error) { return e.mounts[name], nil }
+
+func (e *errRotationalFS) AllNonRotational(string) (bool, error) {
+	return false, errors.New("no /sys, no block devices, nothing")
+}
+
+// An UNDETERMINED rotational answer must resolve toward the ARRAY.
+//
+// This is the same asymmetry the mountpoint probe follows, and it is the one
+// mutation that a "returns false on error" reading of the code hides: an
+// implementation that treated an error as "not rotational" would classify every
+// unreadable member as a pool. The shapes that land here are real - a container
+// without /sys, a FUSE or network mount with no block device, a storage layer
+// this code does not understand.
+func TestUndeterminedRotationalIsNotAPool(t *testing.T) {
+	tr := newTree(t)
+	member := filepath.Join(tr.root, "cache")
+
+	if got := isPool(tr.asPool(OS, "cache"), member); !got {
+		t.Fatalf("precondition: isPool(%s) = false with a working probe, so this "+
+			"test cannot show the error path is what rejects it", member)
+	}
+
+	undetermined := &errRotationalFS{FS: OS, mounts: map[string]bool{member: true}}
+	if got := isPool(undetermined, member); got {
+		t.Errorf("isPool(%s) = true when the rotational probe errored, want false: "+
+			"an undetermined answer must resolve toward the array", member)
 	}
 }

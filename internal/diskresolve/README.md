@@ -65,14 +65,42 @@ The wired consumer (`IsPool`, #113 wiring) fixes this by construction rather
 than by relying on the cache assumption: it probes only the members already
 known to be pools, never array members, so the cost is a handful of stats
 against disks that, on a stock array, never spin down regardless of dentry-cache
-state. "Known to be pools" means the member is named unlike an array disk AND is the
-root of a mounted filesystem, so a stray `/mnt` directory that was never mounted
-is now rejected before it is ever probed (#120). That covers only the
-non-mountpoint case: a bind mount aliasing array content is a genuine mount
-root, and an HDD-backed pool is one too, so both still classify as pools and can
-still spin a disk up; see the assumption stated in full on `isPool`. Startup
-logs the pool members by name so those remaining cases are visible rather than
-silent.
+state. "Known to be pools" means the member satisfies all three of: named unlike an
+array disk, the root of a mounted filesystem, and backed only by non-rotational
+devices (#120). A stray `/mnt` directory that was never mounted is rejected
+before it is ever probed, and so now is a genuine mount whose backing devices
+spin - an HDD-backed pool, or a bind mount that aliases array content.
+
+Rotational status is read once per member at construction, never per resolved
+file. The mount source comes from `/proc/self/mountinfo`; a btrfs volume is then
+expanded through `/sys/fs/btrfs/<fsid>/devices`, because mountinfo names only
+the device the filesystem was mounted by and a pool may span several. Each
+device resolves to the disk carrying its `queue/rotational`, and the member
+counts as non-rotational only when EVERY backing device does - a pool mixing an
+SSD and an HDD spins down, so one spinning device decides it.
+
+Anything the kernel interfaces cannot answer - no `/sys`, a source naming no
+block device, a btrfs volume whose device list cannot be enumerated, or one
+whose named device is claimed by two btrfs filesystems - is UNDETERMINED and
+resolves toward the array, never toward the pool. That last case matters more
+than it sounds: a stale volume or a `btrfs replace` remnant can list a subset of
+the live pool's devices, and picking the wrong list would hide a spinning
+member.
+
+A filesystem on a stacked block device (LUKS, an encrypted array, any
+device-mapper target) mounts by its mapper name, `/dev/mapper/<name>`, which is
+not a bare device name under `/sys/class/block`. It therefore answers
+UNDETERMINED and is always sized for the array: safe, but a complete loss of
+pool sizing on encrypted pools. That is a gap in this resolution step rather
+than a kernel limitation - a dm target propagates rotational status from its
+members, so following the mapper name to its `/dev/dm-N` would answer correctly.
+It is left undone until it can be verified against a real encrypted array,
+because an unverified path here fails in the direction that reintroduces the
+stall.
+
+Startup logs the pool members by name so an operator on such a
+setup can see the classification rather than infer it from a stall.
+
 `Resolve` still probes the full member list when a caller genuinely
 needs to know which array disk holds a file; that path retains the original,
 now-unverified cost claim and should not be used from a placement-only check.
