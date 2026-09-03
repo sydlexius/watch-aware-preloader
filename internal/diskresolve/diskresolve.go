@@ -34,6 +34,16 @@ import (
 // /mnt/cache/... names its member directly.
 var ErrNotUnionPath = errors.New("not a /mnt/user path")
 
+// errUndetermined marks an answer the kernel interfaces could not supply.
+//
+// It is deliberately distinct from "rotational": isPool resolves undetermined
+// toward the array, so an unreadable /sys, a container without one, an
+// unrecognized mount source, or a storage layer this code does not understand
+// all mean "assume it spins" rather than "assume it does not". A wrong "not a
+// pool" only spends cache budget; a wrong "pool" reintroduces the spin-up
+// stall the plugin exists to remove.
+var errUndetermined = errors.New("backing device rotational status undetermined")
+
 // ErrUnresolved is returned when no member holds the file. That is a real
 // answer, not a failure: the union mount may be stale, the file may have been
 // moved by the mover mid-sweep, or the path may simply not exist.
@@ -46,10 +56,12 @@ type Location struct {
 	Member string
 	// Path is the file's real path under Member.
 	Path string
-	// Pool reports whether Member is a named pool (cache/NVMe) rather than a
-	// numbered array disk. Pools do not spin down, so a caller sizing a preload
-	// for spin-up latency should treat these as needing no spin-up buffer at
-	// all - which is the single largest win available from resolving at all.
+	// Pool reports whether Member is storage that does not spin down (a cache
+	// or NVMe pool) rather than a spinning array disk. It is established from
+	// the backing devices' rotational status, not from the member's name; see
+	// isPool. A caller sizing a preload for spin-up latency should treat a pool
+	// as needing no spin-up buffer at all - which is the single largest win
+	// available from resolving at all.
 	Pool bool
 }
 
@@ -64,10 +76,15 @@ type Location struct {
 // "no". Callers must resolve an undetermined answer toward the array (see
 // isPool), because a wrong "not a pool" only spends cache budget while a wrong
 // "pool" silently reintroduces the spin-up stall.
+//
+// AllNonRotational reports whether EVERY block device backing a mount is
+// non-rotational. It carries the same bool/error contract: an error means
+// UNDETERMINED, never "does not spin".
 type FS interface {
 	Stat(name string) (os.FileInfo, error)
 	ReadDir(name string) ([]os.DirEntry, error)
 	IsMountpoint(name string) (bool, error)
+	AllNonRotational(name string) (bool, error)
 }
 
 type osFS struct{}
@@ -124,13 +141,15 @@ type Resolver struct {
 	unionRoot string
 	// pools is the set of members that classify as pools, computed ONCE in New.
 	//
-	// Classification now touches the filesystem (isPool confirms the member is
-	// a mount root), and both IsPool and Resolve are per-target calls, so
-	// classifying on demand would put two Lstat calls per member into the
-	// per-file path - on a 13-member array roughly 26 extra syscalls for every
-	// preload target. Placement is fixed for the life of a sweep, so this is
-	// decided at construction and read thereafter. #120 is explicit that device
-	// resolution must not reach the per-file path.
+	// Classification touches the filesystem: isPool confirms the member is a
+	// mount root AND reads the rotational status of its backing devices, which
+	// walks /proc/self/mountinfo and several sysfs files per member. Both
+	// IsPool and Resolve are per-target calls, so classifying on demand would
+	// put all of that into the per-file path - on a 13-member array, dozens of
+	// syscalls plus a mountinfo parse for every preload target, against disks
+	// this plugin exists to leave asleep. Placement is fixed for the life of a
+	// sweep, so this is decided once at construction and read thereafter. #120
+	// is explicit that device resolution must not reach the per-file path.
 	pools map[string]bool
 }
 
@@ -187,51 +206,57 @@ func Discover(fs FS, mntRoot string) ([]string, error) {
 	return out, nil
 }
 
-// isPool reports whether a member is a named pool rather than a numbered array
-// disk. Array disks are diskN; anything else assigned to a share is a pool
-// (cache, or a user-named NVMe pool).
+// isPool reports whether a member is a pool - storage that does not spin down -
+// rather than a numbered array disk. Three things must all hold, cheapest
+// first, and each one exists because the ones before it are not sufficient:
 //
-// This is a name-based classification and rests on an assumption that is true
-// for the common case but not universal: that a member which is not "diskN" is
-// backed by solid-state storage that never spins down. Two shapes break it, and
-// both size a spinning disk with no spin-up allowance - a silent undersized head
-// on real content:
+//  1. The NAME is not "diskN". Array disks are numbered, so anything else is a
+//     pool CANDIDATE. Alone this is only a guess: it admits any directory a
+//     user happened to leave under /mnt.
+//  2. The member is the ROOT OF A MOUNTED FILESYSTEM. A plain directory is not
+//     a pool however it is named. Observed on a real array, where
+//     /mnt/RecycleBin - a directory on rootfs - classified as a pool.
+//  3. EVERY BACKING DEVICE IS NON-ROTATIONAL. A mount root can still spin:
+//     Unraid permits a pool of spinning disks, and a bind mount aliasing array
+//     content is a genuine mount root too. Inode identity does not catch the
+//     latter, because an alias of an array file genuinely IS the same inode.
 //
-//   - An HDD-backed pool. Unraid permits a pool of spinning disks (e.g. a
-//     btrfs/ZFS pool named "archive"), which spins down exactly like an array
-//     disk. Nothing in the name says so.
-//   - ANY other directory under /mnt that reaches array content. Discover admits
-//     every directory it does not explicitly exclude, so a bind mount, an alias,
-//     or a leftover mount point that shadows array files becomes a "pool"
-//     member. The inode-identity check does NOT catch this: an alias of an array
-//     file genuinely IS the same inode, so it matches.
+// Step 3 is what makes the classification about the property that actually
+// matters. A pool mixing an SSD and an HDD spins down, so one spinning device
+// decides the whole member; and because a btrfs volume may span devices that
+// /proc/self/mountinfo does not name, the device list is expanded through sysfs
+// rather than taken from the mount source. See AllNonRotational.
 //
-// The SECOND shape is now PARTLY rejected: a member that is not the root of a
-// mounted filesystem cannot be a pool, whatever it is named. That check needs no
-// /sys walk and no device mapping, only a comparison of device numbers against
-// the parent directory, so it is cheap enough to run at startup. It was observed
-// on a real array, where /mnt/RecycleBin - a plain directory on rootfs - was
-// classified as a pool purely because its name is not "diskN".
+// WHAT IS NOT COVERED. A filesystem on a stacked block device - LUKS, an
+// encrypted Unraid array, any device-mapper target - mounts by its mapper name
+// (/dev/mapper/<name>), which is not a bare device name under /sys/class/block.
+// That answers UNDETERMINED, so such a member never classifies as a pool and is
+// always sized with the full spin-up allowance. It is SAFE and it is a complete
+// loss of the optimisation for encrypted pools, which is why it is stated here
+// rather than left to be discovered from an unexplained absence.
 //
-// It rejects only the NON-MOUNTPOINT case. A bind mount or any other genuine
-// mount that reaches array content IS a mount root, so it still passes here and
-// is still misclassified. Rejecting that needs the rotational status of the
-// backing devices, the same thing the HDD-backed pool below needs.
+// This is a resolution gap, not a kernel one: a dm target PROPAGATES rotational
+// status from its members (measured - a linear target over a rotational device
+// reports 1, and a target mixing both reports 1 in either slave order), so
+// following /dev/mapper/<name> to its /dev/dm-N would answer correctly. It is
+// left undone deliberately: no encrypted array was available to verify it
+// against, and shipping an unverified path here fails in the direction that
+// reintroduces the stall. See TestMapperSourceIsUndetermined.
 //
-// The FIRST shape (an HDD-backed pool) still stands: a pool of spinning disks
-// is a genuine mountpoint, so this check passes it through and it remains
-// misclassified. Rejecting it needs the rotational status of the backing
-// devices, which is the larger change #120 tracks. There is deliberately no
-// config escape hatch. The mitigation stays visibility: PoolMembers is logged
-// at startup (see cmd/preloadd/placement.go), so an operator sees exactly which
-// members were classified as pools and can spot that shape in one line.
+// A source that names no block device at all (ZFS by pool name, a network
+// mount) answers UNDETERMINED too, as does a btrfs volume whose device list
+// cannot be enumerated, or one whose named device is claimed by two
+// filesystems - the mounted one is not identifiable from sysfs, and guessing
+// would resolve toward the pool.
 //
-// UNCERTAINTY RESOLVES TOWARD THE ARRAY. An unreadable path, a filesystem that
-// cannot report device numbers, a container without the member mounted - all
-// answer "not a pool", never "pool". A wrong "not a pool" only spends cache
-// budget on a file that did not need it; a wrong "pool" silently reintroduces
-// the spin-up stall this project exists to remove, and that asymmetry decides
-// every uncertain case.
+// There is deliberately no config escape hatch.
+//
+// UNCERTAINTY RESOLVES TOWARD THE ARRAY, at every step. An unreadable path, a
+// filesystem that cannot report device numbers, a container with no /sys, a
+// member that is not mounted - all answer "not a pool", never "pool". A wrong
+// "not a pool" only spends cache budget on a file that did not need it; a wrong
+// "pool" silently reintroduces the spin-up stall this project exists to remove,
+// and that asymmetry decides every uncertain case.
 func isPool(fs FS, member string) bool {
 	if !nameLooksLikePool(member) {
 		return false
@@ -240,6 +265,17 @@ func isPool(fs FS, member string) bool {
 	// the mount root is not, however it is named.
 	mounted, err := fs.IsMountpoint(member)
 	if err != nil || !mounted {
+		return false
+	}
+	// A pool is storage that does not spin down, and a mount root alone does
+	// not establish that: Unraid permits a pool of spinning disks, and a bind
+	// mount aliasing array content is a genuine mount root too. Both are named
+	// unlike an array disk, so only the backing devices can tell them apart.
+	//
+	// Undetermined resolves toward the array, exactly as the mountpoint probe
+	// above does.
+	nonRotational, err := fs.AllNonRotational(member)
+	if err != nil || !nonRotational {
 		return false
 	}
 	return true
@@ -316,7 +352,7 @@ func (r *Resolver) IsPool(unionPath string) bool {
 	return loc.Pool
 }
 
-// poolMembers returns the subset of r.members that are named pools, in the
+// poolMembers returns the subset of r.members that classify as pools, in the
 // same order they were configured.
 func (r *Resolver) poolMembers() []string {
 	var pools []string
@@ -328,12 +364,13 @@ func (r *Resolver) poolMembers() []string {
 	return pools
 }
 
-// PoolMembers returns the subset of members that classify as named pools, in
-// the same order they were configured. It exists for startup logging: naming
-// the pool members lets an operator with an HDD-backed pool (see isPool's doc
-// comment on that misclassification) spot the problem from a log line instead
-// of an unexplained stall, and lets an operator on an all-array deployment see
-// at a glance that pool-resident sizing has nothing to act on.
+// PoolMembers returns the subset of members that classify as pools, in the same
+// order they were configured. It exists for startup logging: naming them lets an
+// operator confirm the classification matches the hardware - that an HDD-backed
+// pool is absent, and that a genuine SSD pool behind a storage layer isPool
+// cannot follow has not been quietly demoted to the array - and lets an operator
+// on an all-array deployment see at a glance that pool-resident sizing has
+// nothing to act on.
 func (r *Resolver) PoolMembers() []string {
 	return r.poolMembers()
 }

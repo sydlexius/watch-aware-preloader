@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -44,9 +45,30 @@ func capturingLog() (*slog.Logger, *bytes.Buffer) {
 type mountedFS struct {
 	diskresolve.FS
 	mounts map[string]bool
+	// spinning marks members that ARE mount roots but whose backing devices
+	// rotate, so a test can build an HDD-backed pool.
+	spinning map[string]bool
 }
 
 func (m *mountedFS) IsMountpoint(name string) (bool, error) { return m.mounts[name], nil }
+
+// AllNonRotational is faked alongside IsMountpoint because a pool is BOTH a
+// mount root AND storage that does not spin down (#120), and a plain temp
+// directory can represent neither.
+//
+// The two facts are held in SEPARATE maps on purpose. Answering both from one
+// map would make them inseparable, so no test here could express a member that
+// is a genuine mount root backed by SPINNING disks - the HDD-backed pool that
+// is the whole point of the rotational check. spinning names those members.
+func (m *mountedFS) AllNonRotational(name string) (bool, error) {
+	if m.spinning[name] {
+		return false, nil
+	}
+	if !m.mounts[name] {
+		return false, errors.New("no backing device for a temp directory")
+	}
+	return true, nil
+}
 
 // poolFS makes the named members under root read as mount roots.
 func poolFS(root string, members ...string) diskresolve.FS {
@@ -55,6 +77,17 @@ func poolFS(root string, members ...string) diskresolve.FS {
 		mounts[filepath.Join(root, m)] = true
 	}
 	return &mountedFS{FS: diskresolve.OS, mounts: mounts}
+}
+
+// spinningFS makes the named members mount roots whose backing devices ROTATE -
+// an HDD-backed pool. They pass the name and mountpoint checks and must still
+// not classify as pools.
+func spinningFS(root string, members ...string) diskresolve.FS {
+	mounts := make(map[string]bool, len(members))
+	for _, m := range members {
+		mounts[filepath.Join(root, m)] = true
+	}
+	return &mountedFS{FS: diskresolve.OS, mounts: mounts, spinning: mounts}
 }
 
 func TestPoolResidentOptsWithMembers(t *testing.T) {
@@ -175,5 +208,40 @@ func TestPoolResidentOptsPredicateAnswersTrue(t *testing.T) {
 	}
 	if got(filepath.Join(root, "user", "Media", "absent.mkv")) {
 		t.Error("predicate = true for a file that does not exist, want false")
+	}
+}
+
+// The startup log must not name an HDD-backed pool as a pool member.
+//
+// This is the operator-visible half of #120: pool_members is the one line
+// showing how storage was classified, and a member that spins has to be absent
+// from it. The member here passes the name and mountpoint checks and is rejected
+// only on rotational status, so nothing else in the chain can account for it.
+func TestSpinningMemberIsNotLoggedAsAPool(t *testing.T) {
+	root := mntTree(t, "user", "disk1", "archive")
+	log, buf := capturingLog()
+
+	// Precondition: presented as SSD-backed, the same member IS a pool and IS
+	// logged. Without this the assertion below could pass for any reason.
+	_ = poolResidentOpts(poolFS(root, "archive"), root, log)
+	if !strings.Contains(buf.String(), "archive") {
+		t.Fatalf("precondition: log = %q, want %q named when it is SSD-backed, so "+
+			"this test cannot show rotational status is what excludes it",
+			buf.String(), "archive")
+	}
+
+	log, buf = capturingLog()
+	opts := poolResidentOpts(spinningFS(root, "archive"), root, log)
+
+	out := buf.String()
+	if strings.Contains(out, "archive") {
+		t.Errorf("log = %q, want the spinning member %q absent from pool_members: "+
+			"an HDD-backed pool spins down like an array disk", out, "archive")
+	}
+	// With no pool member left, placement resolution has nothing to act on and
+	// must not claim to be enabled.
+	if len(opts) != 0 {
+		t.Errorf("len(opts) = %d, want 0 - the only candidate member spins, so there "+
+			"is no pool-resident sizing to enable", len(opts))
 	}
 }
