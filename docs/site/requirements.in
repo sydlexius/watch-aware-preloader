@@ -1,0 +1,16 @@
+# Top-level docs build dependencies. Source of truth for the lockfile.
+#
+# Regenerate the hash-pinned lockfile (docs/site/requirements.txt) after
+# editing this file. Use Python 3.12 to match the version pinned in
+# .github/workflows/pages.yml: the resolver resolves against the target
+# interpreter, so a different version can pick different transitive pins.
+#
+#   uv pip compile --generate-hashes --python-version 3.12 \
+#     docs/site/requirements.in -o docs/site/requirements.txt
+#
+# The lockfile feeds `pip install --require-hashes -r docs/site/requirements.txt`
+# in the Pages workflow, so a typosquat or a compromised PyPI release cannot
+# substitute a different artifact under the same version string (OpenSSF
+# Scorecard PinnedDependenciesID).
+properdocs==1.6.7
+mkdocs-material==9.7.7

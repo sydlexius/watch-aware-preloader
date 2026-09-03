@@ -1,0 +1,97 @@
+# ProperDocs (an MkDocs continuation) config for the documentation site.
+#
+# Build:  properdocs build --config-file docs/site/properdocs.yml
+# Serve:  properdocs serve --config-file docs/site/properdocs.yml
+#
+# Deployed by .github/workflows/pages.yml, which builds on every PR (without
+# deploying) so a broken site or a dead internal link fails at review time
+# rather than after merge.
+site_name: Watch-Aware Preloader
+site_description: >-
+  Unraid plugin that warms the page cache with the media you are likely to play
+  next, using your media server's own watch state.
+site_url: https://sydlexius.github.io/watch-aware-preloader/
+repo_url: https://github.com/sydlexius/watch-aware-preloader
+repo_name: sydlexius/watch-aware-preloader
+edit_uri: edit/main/docs/site/src/
+
+docs_dir: src
+site_dir: site
+
+theme:
+  name: material
+  icon:
+    logo: material/harddisk
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  # Required for Material's :icon-name: shortcodes. Without it attr_list still
+  # styles the buttons, so a missing icon renders as the literal text
+  # ":material-arrow-right:" on a button that otherwise looks correct - a defect
+  # no build gate can see.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+
+plugins:
+  - search
+
+# A link to a page that does not exist is a BUILD FAILURE. This is the gate that
+# keeps a slice from shipping links to pages a later slice has not created yet,
+# and it is why the nav below lists only pages that exist.
+#
+# strict alone does NOT cover ANCHORS: a link to a heading that does not exist
+# logs at INFO and still exits 0, because validation.links.anchors defaults to
+# a warning level below the strict threshold. That is raised to an error below,
+# since a link to a renamed heading is exactly as dead as a link to a missing
+# page and is harder to notice by eye.
+strict: true
+
+validation:
+  links:
+    # 'warn' is the strongest level this option accepts ('error' is rejected as
+    # a config error), and under strict: true a warning aborts the build - so
+    # this makes a dead anchor fail exactly like a dead page.
+    anchors: warn
+    # An ABSOLUTE url is never validated by any of this - see install.md, which
+    # links to a README section. Those have to be checked by hand.
+    unrecognized_links: warn
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Configuration: configuration.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/sydlexius/watch-aware-preloader
+      name: Source on GitHub
