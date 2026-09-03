@@ -1,0 +1,23 @@
+# markdownlint configuration for the documentation SOURCES only.
+#
+# This repo does not run markdownlint in CI or the pre-push gate, but review
+# bots do, so the rules that are wrong for this content are turned off here
+# rather than worked around inline. Scoped to docs/site/ so it cannot change
+# how any other markdown in the repo is judged.
+config:
+  # MD046 (code-block-style) expects fenced blocks and reads mkdocs-material's
+  # INDENTED ADMONITION BODIES as indented code. They are prose, not code:
+  #
+  #   !!! warning "Title"
+  #       This indented paragraph is the admonition body.
+  #
+  # The indentation is required by the syntax, so there is nothing to fix in the
+  # content - it fires on every admonition in every page. Fencing the prose
+  # would break the rendering the syntax exists to produce, and suppression
+  # comments around each one would put six markdownlint directives into user
+  # documentation to satisfy a linter this repo does not run.
+  MD046: false
+
+  # MD013 (line-length) is off because prose here is wrapped for readability in
+  # a source file, and tables and URLs legitimately exceed any column limit.
+  MD013: false

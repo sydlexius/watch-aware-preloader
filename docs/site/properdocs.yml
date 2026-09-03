@@ -90,6 +90,9 @@ nav:
   - Home: index.md
   - Install: install.md
   - Configuration: configuration.md
+  - How it works: how-it-works.md
+  - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
 
 extra:
   social:

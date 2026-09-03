@@ -87,4 +87,4 @@ If a sweep is not doing what you expect, the first three things to check:
 3. Whether the items were **already resident**. A sweep that reports everything
    skipped is a healthy steady state, not a failure.
 
-A dedicated troubleshooting page is coming in the next documentation slice.
+If none of those explain it, see [Troubleshooting](troubleshooting.md).
