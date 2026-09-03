@@ -59,7 +59,7 @@ webGui yet.
 
 | Setting | Default | Set in the webGui? | What it does |
 |---|---|---|---|
-| RAM percent | `50` | Yes | Share of system RAM the warm set may occupy. Page cache is reclaimable, so this never starves applications - the kernel evicts it under memory pressure. |
+| RAM percent | `50` | Yes | Share of system RAM the warm set may occupy. Page cache is reclaimable, so the kernel evicts it under pressure rather than denying memory to an application - but a large warm set still competes for cache and I/O, so lower this if a sweep is noticeable. |
 | Target seconds | `20` | Yes | How many seconds of playback each preload should cover. Sizing is duration-based, derived from the bitrate the server reports, so 4K and SD both cover the spin-up window. |
 | Min head MB | `8` | No | Floor on the head read, so a very low-bitrate file still gets a useful warm region. |
 | Max head MB | `250` | No | Ceiling on the head read. This is the real limit on very high-bitrate content. |

@@ -69,10 +69,14 @@ therefore need the file tail warmed as well as the head, which the plugin does.
   byte offset rather than the file head, so continuing a movie is as instant as
   starting one.
 - **Duration-based sizing.** Each preload is sized by playback seconds, derived
-  from the bitrate the server already reports, so the warmed window covers the
-  spin-up gap whether the title is 4K or SD.
-- **Budgeted.** You cap it at a share of RAM. Page cache is reclaimable, so it
-  never starves applications: the kernel evicts it under memory pressure.
+  from the bitrate the server already reports, so the warmed window targets the
+  spin-up gap whether the title is 4K or SD - subject to the configured head
+  floor and ceiling, which is why a peak-bitrate 4K title can still fall short
+  ([#112](https://github.com/sydlexius/watch-aware-preloader/issues/112)).
+- **Budgeted.** You cap it at a share of RAM. Page cache is reclaimable, so the
+  kernel evicts it under memory pressure rather than denying memory to an
+  application - though a large warm set still competes for cache and I/O with
+  everything else on the box.
 
 For the mechanism in detail - how sizing is derived, why resume needs the file
 tail, and how pool-resident content is treated - see

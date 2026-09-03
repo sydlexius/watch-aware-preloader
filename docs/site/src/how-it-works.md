@@ -90,10 +90,15 @@ warming already is.
 
 ## Budgeted, and safe under pressure
 
-You cap the warm set as a share of RAM. Page cache is **reclaimable**, so this
-never starves applications: under memory pressure the kernel evicts cached pages
-before it does anything drastic. The worst case of an over-large budget is that
-your warmed ranges get evicted sooner, not that something is denied memory.
+You cap the warm set as a share of RAM. Page cache is **reclaimable**, so the
+kernel evicts cached pages under memory pressure rather than denying memory to
+an application: an over-large budget cannot cause an out-of-memory failure.
+
+That is not the same as no impact. Warmed pages compete for the same cache as
+everything else on the box, so a large or frequent warm set can evict pages
+another application was relying on, and the reads themselves compete for I/O
+while a sweep runs. The budget is the control for that - lower it if a sweep is
+noticeable, rather than assuming the default suits every machine.
 
 ## Run model
 

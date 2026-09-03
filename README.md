@@ -60,8 +60,11 @@ seek - so resume/next-up targets need the file tail warmed too, not just the hea
   oversized cue index is currently only partly covered - see
   [#143](https://github.com/sydlexius/watch-aware-preloader/issues/143).)
 - **Duration-based sizing.** Each preload is sized by playback seconds derived from bitrate, so
-  the warmed window covers the spin-up gap at any resolution.
-- **Budgeted.** You cap it at a share of RAM; page cache is reclaimable, so it never starves apps.
+  the warmed window targets the spin-up gap at any resolution, subject to the configured head
+  floor and ceiling ([#112](https://github.com/sydlexius/watch-aware-preloader/issues/112) tracks
+  the ceiling binding on peak-bitrate 4K).
+- **Budgeted.** You cap it at a share of RAM. Page cache is reclaimable, so the kernel evicts it
+  under pressure rather than denying memory to applications.
 
 Full detail: **[How it works](https://sydlexius.github.io/watch-aware-preloader/how-it-works/)**.
 
