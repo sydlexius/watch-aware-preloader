@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Community Applications repository profile.
+
+     CA reads this file from the repository ROOT when the repo is submitted at
+     https://ca.unraid.net/submit. A missing or EMPTY <Profile> blocks the
+     submission from finalizing, so the prose here is load-bearing rather than
+     decorative.
+
+     This repo is its own CA repository (this file, plus the wrapper under
+     plugins/), which is what the official starter does and what the majority of
+     recently listed plugins do. The sibling sydlexius/unraid-templates repo is a
+     SEPARATE CA repository for DOCKER templates: a plugin does not belong there,
+     its wrapper schema differs (<Plugin>/<PluginURL> rather than
+     <Container>/<Repository>), and that repo's own profile describes itself as
+     Docker-only.
+
+     Root element is <CommunityApplications>, per the official starter. The older
+     <RepositoryInfo> spelling appears in this author's Docker templates repo and
+     is NOT what the current starter uses. -->
+<CommunityApplications>
+  <Profile>Unraid plugins maintained by sydlexius. Watch-Aware Preloader warms the Linux page cache with the media each household user is most likely to play next, read from the media server's own watch state (resume points, next-up episodes, and recently-added), so playback starts instantly instead of waiting several seconds for an array disk to spin up. Emby is supported today; Jellyfin support is on the roadmap. Support is available via the project's GitHub Issues page.</Profile>
+  <WebPage>https://github.com/sydlexius/watch-aware-preloader</WebPage>
+</CommunityApplications>

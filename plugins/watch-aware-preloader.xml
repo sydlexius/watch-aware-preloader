@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Community Applications wrapper for the Watch-Aware Preloader plugin.
+
+     PRECEDENCE. The starter documents that the .plg's own attributes override
+     the wrapper for support=, min= and max=. It does NOT say that about icon,
+     and the feed shows the opposite: the MOTD plugin ships icon="fa-desktop" in
+     its .plg and <IconFA>desktop</IconFA> in its wrapper, and CA publishes
+     "desktop" - the WRAPPER value. So IconFA here is the one that reaches the
+     catalog, and it is deliberately spelled without the fa- prefix.
+
+     Either way both files are kept in agreement, which is what
+     test/ca_wrapper_test.sh enforces: whichever surface wins, a wrapper that
+     disagrees with the shipped .plg is describing a plugin that does not exist.
+
+     <PluginURL> is the IDENTITY KEY and must be BYTE-IDENTICAL to the .plg's own
+     pluginURL attribute. A mismatch is the one hard failure mode of a CA plugin
+     submission, which is why test/ca_wrapper_test.sh asserts the two agree
+     rather than leaving it to review. -->
+<Plugin>
+  <Name>Watch-Aware Preloader</Name>
+  <PluginURL>https://github.com/sydlexius/watch-aware-preloader/releases/latest/download/watch-aware-preloader.plg</PluginURL>
+  <PluginAuthor>sydlexius</PluginAuthor>
+
+  <Overview>Warms the Linux page cache with the media each household user is most likely to play next, so playback starts instantly instead of waiting for an array disk to spin up.&#10;&#10;Unlike preloaders that guess from filesystem modification time, this derives intent from your media server's own watch state: resume points, next-up episodes, recently-added items, and what each user has actually been watching. Emby is supported today; Jellyfin support is on the roadmap and is not in this release. Items in an active playback session are excluded, since those disks are already spinning.&#10;&#10;Each preload is sized by playback SECONDS rather than a fixed byte count, using the bitrate the server already reports, so a 4K title and an SD one both cover the spin-up window. Resume candidates are warmed from the byte offset where playback will actually resume, not the file head, and the file tail is warmed too so a mid-file seek does not stall reading container cues off a cold platter.&#10;&#10;It never serves, transcodes, or modifies media. It only reads byte ranges so the kernel caches them. Measured on a live array, a cold read from full standby cost 8.5-9.9 seconds; a warmed one starts immediately.&#10;&#10;Runs as a cron-invoked one-shot by default (like Mover or Fix Common Problems), with an optional resident daemon mode for sub-interval reaction. Single static Go binary, no runtime dependencies.</Overview>
+
+  <Support>https://github.com/sydlexius/watch-aware-preloader/issues</Support>
+  <Project>https://github.com/sydlexius/watch-aware-preloader</Project>
+  <ReadMe>https://raw.githubusercontent.com/sydlexius/watch-aware-preloader/main/README.md</ReadMe>
+
+  <Category>Tools:System</Category>
+  <ExtraSearchTerms>emby jellyfin page cache preload spinup spin-up standby array disk latency playback resume next-up media server warm</ExtraSearchTerms>
+
+  <!-- FontAwesome 4.7 name WITHOUT the fa- prefix, matching the .plg's
+       icon="hdd-o". IconFA takes precedence over <Icon>, and hdd-o is the valid
+       FA4 hard-drive class Unraid actually ships (solid fa-hdd is FA5+ and
+       renders empty, leaving the Plugins row with no clickable link). -->
+  <IconFA>hdd-o</IconFA>
+
+  <MinVer>7.0.0</MinVer>
+  <License>MIT</License>
+</Plugin>
