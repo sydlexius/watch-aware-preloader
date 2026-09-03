@@ -61,10 +61,6 @@ jobs:
       - name: Build site
         run: properdocs build --config-file docs/site/properdocs.yml
 
-      - name: Configure Pages
-        if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-
       - name: Upload artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -83,6 +79,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # configure-pages calls the Pages API, so it needs the pages permission
+      # and a Pages-enabled repository. It lives HERE rather than in the build
+      # job for both reasons: build runs with contents: read only, and a build
+      # that reached the API would fail on main whenever Pages is off - the
+      # opposite of the "build passes, deploy fails" behaviour this workflow
+      # documents.
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

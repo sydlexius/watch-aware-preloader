@@ -81,8 +81,9 @@ validation:
     # a config error), and under strict: true a warning aborts the build - so
     # this makes a dead anchor fail exactly like a dead page.
     anchors: warn
-    # An ABSOLUTE url is never validated by any of this - see install.md, which
-    # links to a README section. Those have to be checked by hand.
+    # None of this validates an ABSOLUTE url: a link to another site, or to a
+    # GitHub anchor, can rot without any gate noticing. Those have to be
+    # checked by hand.
     unrecognized_links: warn
 
 nav:
