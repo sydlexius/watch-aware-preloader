@@ -7,12 +7,16 @@ The project is MIT licensed and development happens in the open at
 
 ## What you need
 
-The repo is polyglot: a Go daemon plus a PHP settings page for Unraid.
+The repo is polyglot: a Go binary plus a PHP settings page for Unraid.
 Dependencies are declared in each stack's native manifest.
+
+The binary is named `preloadd`, but the primary run model is a cron-invoked
+one-shot rather than a resident service - `--daemon` is an opt-in mode. Worth
+knowing before you go looking for a supervision loop that is not the main path.
 
 | Tool | Version | Why |
 |---|---|---|
-| Go | 1.27+ | builds the `preloadd` daemon |
+| Go | 1.27+ | builds the `preloadd` binary |
 | make | any | task runner |
 | golangci-lint | v2 | Go static analysis |
 | PHP CLI | 8.1+ (8.3.0 pinned) | runs the PHP linters |
@@ -20,7 +24,7 @@ Dependencies are declared in each stack's native manifest.
 | PHPStan | ^2.0 | PHP static analysis (`.php` and `.page`) |
 | PHP-CS-Fixer | ^3.64 | PHP style and auto-format |
 
-Only Go and make are needed to build the daemon. The PHP tooling is for working
+Only Go and make are needed to build the binary. The PHP tooling is for working
 on the settings page.
 
 If you use [asdf](https://asdf-vm.com) or [mise](https://mise.jdx.dev), the
@@ -36,7 +40,7 @@ make tools    # golangci-lint via go install, plus PHP dev deps via composer
 ## Everyday commands
 
 ```bash
-make build       # build the daemon
+make build       # build the binary
 make test        # Go tests
 make test-race   # Go tests with the race detector
 make lint        # Go lint, for the host GOOS and for linux
@@ -47,10 +51,14 @@ make php-fix     # auto-fix PHP style
 
 !!! warning "Always go through `make`, never a bare `go` command"
 
-    There is a `vendor/` directory at the repo root, and it belongs to
-    **Composer**, not Go. A bare `go build` or `go test ./...` assumes any root
-    `vendor/` is its own and fails with "inconsistent vendoring". The Makefile
-    sets `GOFLAGS=-mod=readonly`, which is the guard.
+    Once `composer install` has run (via `make tools`), there is a `vendor/`
+    directory at the repo root, and it belongs to **Composer**, not Go. It is
+    gitignored, so a fresh clone does not have one - the failure appears only
+    after you set up the PHP tooling, which is what makes it confusing.
+
+    From then on a bare `go build` or `go test ./...` assumes any root
+    `vendor/` is its own and fails with "inconsistent vendoring". Nothing is
+    broken; the Makefile sets `GOFLAGS=-mod=readonly`, which is the guard.
 
 !!! note "`make lint` runs twice, on purpose"
 
@@ -60,7 +68,7 @@ make php-fix     # auto-fix PHP style
 
 ## The single binary
 
-The compiled daemon is one static binary with **no runtime dependencies** on the
+The compiled binary is one static executable with **no runtime dependencies** on the
 Unraid host: no CGO, nothing to install alongside it. That is deliberate, since
 an Unraid plugin cannot assume a package manager or persistent system state.
 

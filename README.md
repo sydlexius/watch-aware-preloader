@@ -56,7 +56,9 @@ seek - so resume/next-up targets need the file tail warmed too, not just the hea
 - **Watch state, not modification time.** Preload decisions come from the media server API:
   resume points, next-up episodes, recently-added, and per-user history.
 - **Resume from the offset.** An in-progress title is warmed at the resume byte offset, plus the
-  file tail, so the player can read the container cue index without waking the disk.
+  file tail, so the player can usually read the container cue index without waking the disk. (An
+  oversized cue index is currently only partly covered - see
+  [#143](https://github.com/sydlexius/watch-aware-preloader/issues/143).)
 - **Duration-based sizing.** Each preload is sized by playback seconds derived from bitrate, so
   the warmed window covers the spin-up gap at any resolution.
 - **Budgeted.** You cap it at a share of RAM; page cache is reclaimable, so it never starves apps.
