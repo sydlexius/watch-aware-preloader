@@ -47,7 +47,7 @@ func (p sysProber) AllNonRotational(member string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// Defence in depth, not a reachable branch today: every path in
+	// Defense in depth, not a reachable branch today: every path in
 	// backingDevices either returns a non-empty list or an error. It is kept
 	// because the loop below would otherwise answer "non-rotational" for an
 	// empty list - vacuously true, and the dangerous direction - if a future
@@ -92,7 +92,7 @@ func (p sysProber) backingDevices(member string) ([]string, error) {
 		// A btrfs volume may span devices the mount source does not name, so
 		// the source alone cannot answer "is EVERY backing device
 		// non-rotational". Enumeration failing is therefore UNDETERMINED, not
-		// a licence to judge the one device that happens to be named.
+		// a license to judge the one device that happens to be named.
 		//
 		// Falling back to the named source here would be the one place in this
 		// package where uncertainty resolves toward the POOL: on a container

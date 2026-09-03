@@ -39,8 +39,16 @@ cover: ## Run tests with a coverage report
 	go tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: ## Run golangci-lint
+lint: ## Run golangci-lint (host GOOS, then linux for build-tagged files)
 	$(GOLANGCI) run
+	@# A file behind //go:build linux is NOT in the build on darwin, so the run
+	@# above never reads it - it is skipped silently, with no warning and a
+	@# "0 issues" result. internal/diskresolve/rotational_linux.go and its test
+	@# are exactly that shape, and three misspell findings in them passed this
+	@# gate and failed CI (PR #140). CI lints on linux, so linting only the host
+	@# GOOS means the gate does not cover what CI checks.
+	@echo "=== golangci-lint (GOOS=linux) ==="
+	GOOS=linux $(GOLANGCI) run
 
 .PHONY: fmt
 fmt: ## Format Go code and tidy modules

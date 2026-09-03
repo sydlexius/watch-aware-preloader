@@ -285,7 +285,7 @@ func TestUndeterminedShapesReportAnError(t *testing.T) {
 	}{
 		{
 			name:  "member not in mountinfo",
-			setup: func(t *testing.T, tr *sysTree) {},
+			setup: func(_ *testing.T, _ *sysTree) {},
 			probe: "/mnt/absent",
 		},
 		{
@@ -642,7 +642,7 @@ func TestMapperSourceIsUndetermined(t *testing.T) {
 }
 
 // A btrfs filesystem whose device list cannot be READ makes the answer
-// undetermined, rather than being passed over in favour of a readable one.
+// undetermined, rather than being passed over in favor of a readable one.
 //
 // Skipping it reaches the exact wrong answer the ambiguity check exists to
 // prevent, through a different door: the unreadable filesystem may be the one

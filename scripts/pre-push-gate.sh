@@ -85,17 +85,35 @@ EOF_FILES
         return "$found"
     }
 
-    lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
-    if [ "${lint_rc:-0}" -ne 0 ] && lint_stale "$lint_out"; then
-        echo "stale lint cache detected (findings name a removed worktree); clearing and retrying"
-        golangci-lint cache clean
+    # Lint the HOST GOOS and then linux. A file behind //go:build linux is not
+    # in the build on a darwin host, so the first pass never reads it: no
+    # warning, no skip notice, just "0 issues". CI lints on linux, so a
+    # host-only gate does not cover what CI checks -- three misspell findings in
+    # internal/diskresolve/rotational_linux*.go cleared this gate and failed CI
+    # on PR #140. The linux pass is what makes the local gate match CI.
+    for lint_goos in "" linux; do
         lint_rc=0
-        lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
-    fi
-    if [ "${lint_rc:-0}" -ne 0 ]; then
-        printf '%s\n' "$lint_out"
-        exit "$lint_rc"
-    fi
+        if [ -n "$lint_goos" ]; then
+            echo "--- GOOS=$lint_goos ---"
+            lint_out=$(GOOS="$lint_goos" golangci-lint run ./... 2>&1) || lint_rc=$?
+        else
+            lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
+        fi
+        if [ "$lint_rc" -ne 0 ] && lint_stale "$lint_out"; then
+            echo "stale lint cache detected (findings name a removed worktree); clearing and retrying"
+            golangci-lint cache clean
+            lint_rc=0
+            if [ -n "$lint_goos" ]; then
+                lint_out=$(GOOS="$lint_goos" golangci-lint run ./... 2>&1) || lint_rc=$?
+            else
+                lint_out=$(golangci-lint run ./... 2>&1) || lint_rc=$?
+            fi
+        fi
+        if [ "$lint_rc" -ne 0 ]; then
+            printf '%s\n' "$lint_out"
+            exit "$lint_rc"
+        fi
+    done
     echo "OK"
 fi
 
