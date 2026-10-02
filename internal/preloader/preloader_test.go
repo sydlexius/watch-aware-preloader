@@ -485,6 +485,35 @@ func TestRunResumeWarmsFrontAndExactCueTail(t *testing.T) {
 	}
 }
 
+func TestRunResumeOversizedCueIndexWarmsItsHead(t *testing.T) {
+	// A cue index larger than maxTailBytes (#143): the cap must trim the far
+	// end of the region, never its start. The player reads the index from
+	// CueStart forward, so a warm beginning partway in leaves that first read
+	// cold. Reproduction from the issue: 60 GiB file, 100 MiB cue index.
+	cache := &fakeCache{resident: -1} // always warm
+	const size = int64(60 << 30)
+	fs := fakeFS{"/mnt/user/4K/a.mkv": size}
+	p := New(testCfg(), cache, pathmap.New(nil), fs, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cueStart := size - (100 << 20)
+	p.inspect = func(_ string, _ int64) (container.Layout, bool) {
+		return container.Layout{FrontEnd: 200 << 10, CueStart: cueStart}, true
+	}
+	targets := []core.PreloadTarget{{
+		Item: core.MediaItem{ID: "a", ServerPath: "/mnt/user/4K/a.mkv", BitrateBps: 80_000_000, ResumeOffset: 30 * time.Minute},
+		Tier: core.TierResume,
+	}}
+	p.Run(context.Background(), targets, 1<<40)
+
+	if len(cache.warmed) != 3 {
+		t.Fatalf("want 3 warm calls (head+front+tail), got %d: %+v", len(cache.warmed), cache.warmed)
+	}
+	tail := cache.warmed[2]
+	if tail.offset != cueStart || tail.length != maxTailBytes {
+		t.Errorf("cue tail = offset %d len %d, want offset %d (CueStart) len %d (the cap)",
+			tail.offset, tail.length, cueStart, int64(maxTailBytes))
+	}
+}
+
 func TestRunResumeNearEOFSuppressesOverlappingCueTail(t *testing.T) {
 	// A resume whose content window reaches EOF: a parsed cue index inside that
 	// window must NOT produce a separate tail warm (clampTailToContent collapses

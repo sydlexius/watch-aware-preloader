@@ -307,7 +307,7 @@ func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) 
 		tailOffset, tail = flatTail(size, p.cfg.TailBytes)
 	}
 	// The tail must not overlap the content window (keeps the budget accurate).
-	tailOffset, tail = clampTailToContent(tailOffset, tail, offset, head, size)
+	tailOffset, tail = clampTailToContent(tailOffset, tail, offset, head)
 	return warmRanges{front: front, offset: offset, head: head, tailOffset: tailOffset, tail: tail}
 }
 
@@ -339,12 +339,15 @@ func (p *Preloader) inspectRanges(seeking bool, hostPath string, size, offset in
 	}
 	// A trailing cue index needs its own tail warm; a front-placed cue index
 	// is already covered by the front-metadata window.
+	//
+	// The warm always STARTS at CueStart. When the cue region is larger than
+	// maxTailBytes the cap trims its far end, not its beginning: the player
+	// reads the index from CueStart forward before it can seek, so a warm
+	// that begins partway into the index leaves the first read cold and the
+	// disk spins up anyway (#143).
 	if layout.CueStart >= front && layout.CueStart < size {
 		tailOffset = layout.CueStart
-		if tailOffset < size-maxTailBytes {
-			tailOffset = size - maxTailBytes
-		}
-		tail = size - tailOffset
+		tail = min(size-tailOffset, maxTailBytes)
 	}
 	return front, tailOffset, tail, true
 }
@@ -361,13 +364,13 @@ func flatTail(size, tailBytes int64) (tailOffset, tail int64) {
 
 // clampTailToContent pulls the tail forward so it never overlaps the content
 // (head) window, keeping the budget accounting free of double-counted bytes.
-func clampTailToContent(tailOffset, tail, offset, head, size int64) (int64, int64) {
+// The tail's end is preserved: a capped cue tail need not end at EOF, and
+// extending it there would undo the cap.
+func clampTailToContent(tailOffset, tail, offset, head int64) (int64, int64) {
 	if tail > 0 && tailOffset < offset+head {
+		end := tailOffset + tail
 		tailOffset = offset + head
-		tail = size - tailOffset
-		if tail < 0 {
-			tail = 0
-		}
+		tail = max(end-tailOffset, 0)
 	}
 	return tailOffset, tail
 }
