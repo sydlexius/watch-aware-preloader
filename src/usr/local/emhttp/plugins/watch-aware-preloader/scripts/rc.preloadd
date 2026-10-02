@@ -504,13 +504,31 @@ write_last_test() {
     fi
 }
 
+# url_escape STR -> STR in query-escape form, byte for byte the same as Go's
+# url.QueryEscape: unreserved characters pass, a space becomes '+', every other
+# byte becomes %XX. LC_ALL=C makes the loop walk bytes, not characters.
+url_escape() {
+    local LC_ALL=C s="$1" out="" c i
+    for ((i = 0; i < ${#s}; i++)); do
+        c="${s:i:1}"
+        case "$c" in
+            [A-Za-z0-9._~-]) out+="$c" ;;
+            ' ') out+='+' ;;
+            *) out+="$(printf '%%%02X' "'$c")" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
 # auth_header TYPE TOKEN -> the request header that authenticates TOKEN on a
 # server of TYPE. Jellyfin reads X-Emby-Token only when its legacy
 # authorization option is on, which it is not by default, so it gets the
 # "MediaBrowser" Authorization scheme instead (mirrors internal/mediaserver).
+# The server splits that header on quotes and commas and URL-decodes each
+# value, so the token is escaped exactly as the Go adapter escapes it.
 auth_header() {
     if [ "$1" = "jellyfin" ]; then
-        printf 'Authorization: MediaBrowser Token="%s"' "$2"
+        printf 'Authorization: MediaBrowser Token="%s"' "$(url_escape "$2")"
     else
         printf 'X-Emby-Token: %s' "$2"
     fi
@@ -570,22 +588,24 @@ test_connection() {
 # and world-readable; only overwrites the cache when ALL THREE subcommands
 # succeed, so a transient failure keeps the last good cache (fail loud).
 write_pickers() {
-    local src="${CFG}" url users libs maps gen tmp
+    local src="${CFG}" url stype users libs maps gen tmp
     [ -f "$src" ] || src="${DEFAULT_CFG}"
     url="$(cfg_get "$src" SERVER_URL "")"
+    stype="$(cfg_get "$src" SERVER_TYPE emby)"
     users="$("${BIN}" list-users -config "${CONFIG}" 2>/dev/null)" || { echo "write_pickers: list-users failed" >&2; return 1; }
     libs="$("${BIN}" list-libraries -config "${CONFIG}" 2>/dev/null)" || { echo "write_pickers: list-libraries failed" >&2; return 1; }
     maps="$("${BIN}" detect-pathmaps -config "${CONFIG}" 2>/dev/null)" || { echo "write_pickers: detect-pathmaps failed" >&2; return 1; }
     gen="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     url="$(json_escape "$url")"
+    stype="$(json_escape "$stype")"
     # Guard every filesystem op: write_pickers is best-effort (test_connection must
     # not fail when the cache cannot be written, e.g. a full/readonly /var), so a
     # failure returns non-zero and cleans up the temp file rather than letting
     # set -e abort the caller or leaving a partial cache behind.
     mkdir -p "$(dirname "${PICKERS}")" || { echo "write_pickers: mkdir failed" >&2; return 1; }
     tmp="$(mktemp "${PICKERS}.XXXXXX")" || { echo "write_pickers: mktemp failed" >&2; return 1; }
-    if ! { printf '{"generated_at":"%s","server_url":"%s","users":%s,"libraries":%s,"pathmaps":%s}\n' \
-        "$gen" "$url" "$users" "$libs" "$maps" > "$tmp" \
+    if ! { printf '{"generated_at":"%s","server_url":"%s","server_type":"%s","users":%s,"libraries":%s,"pathmaps":%s}\n' \
+        "$gen" "$url" "$stype" "$users" "$libs" "$maps" > "$tmp" \
         && chmod 0644 "$tmp" \
         && mv -f "$tmp" "${PICKERS}"; }; then
         echo "write_pickers: cache write failed" >&2

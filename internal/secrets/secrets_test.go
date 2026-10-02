@@ -67,8 +67,8 @@ func TestAPIKeyMissingFileIsFriendlyError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing file with no env var")
 	}
-	if !strings.Contains(err.Error(), "no Emby API key found") {
-		t.Errorf("error = %q, want it to mention 'no Emby API key found'", err)
+	if !strings.Contains(err.Error(), "no media server API key found") {
+		t.Errorf("error = %q, want it to mention 'no media server API key found'", err)
 	}
 }
 

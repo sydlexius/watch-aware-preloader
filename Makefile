@@ -65,7 +65,7 @@ vet: ## Run go vet
 FUZZ_TARGETS := \
 	./internal/pathmap:FuzzToHost \
 	./internal/config:FuzzConfigLoad \
-	./internal/mediaserver/emby:FuzzValidateBaseURL
+	./internal/mediaserver/mbapi:FuzzValidateBaseURL
 
 .PHONY: fuzz
 fuzz: ## Smoke-fuzz each target 20s with mutation; the seed corpus alone runs (no mutation) under `make test`

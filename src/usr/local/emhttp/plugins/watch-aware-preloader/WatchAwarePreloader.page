@@ -33,7 +33,8 @@ $wapKeySet = wap_api_key_is_set(wap_default_secret_path());
 require_once "{$docroot}/plugins/watch-aware-preloader/include/pickers.php";
 $wapPickers    = wap_read_pickers(wap_default_pickers_path());
 $wapServerUrl  = (string) ($wapCfg['SERVER_URL'] ?? 'http://localhost:8096');
-$wapConnected  = wap_pickers_fresh($wapPickers, $wapServerUrl);
+$wapServerType = (string) ($wapCfg['SERVER_TYPE'] ?? 'emby');
+$wapConnected  = wap_pickers_fresh($wapPickers, $wapServerUrl, $wapServerType);
 // Current selections (csv of ids, or legacy names) for checkbox state.
 $wapSelUsers   = array_filter(array_map('trim', explode(',', (string) ($wapCfg['USERS'] ?? ''))), static fn (string $s): bool => $s !== '');
 $wapSelLibs    = array_filter(array_map('trim', explode(',', (string) ($wapCfg['LIBRARIES'] ?? ''))), static fn (string $s): bool => $s !== '');
@@ -300,7 +301,7 @@ if ($wapEstimate !== null) {
         </select>
     </dd>
 </dl>
-<blockquote class="inline_help">The media server the watch state is read from. Run Test connection after changing it to refresh the user and library pickers.</blockquote>
+<blockquote class="inline_help">The media server the watch state is read from. After changing it or the URL, click Apply before running Test connection: the test uses the saved settings to refresh the user and library pickers.</blockquote>
 
 <dl>
     <dt><label for="wap_server_url">Server URL</label></dt>

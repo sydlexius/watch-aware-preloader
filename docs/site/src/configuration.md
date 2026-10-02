@@ -12,9 +12,10 @@ every save and every boot.
 ## Media server
 
 Pick **Emby** or **Jellyfin** as the server type and enter the server's base
-URL, for example `http://tower:8096`. Run **Test connection** after changing
-either one: it checks that the API key is accepted and refreshes the user and
-library pickers from the new server.
+URL, for example `http://tower:8096`. After changing either one, click
+**Apply** and then run **Test connection**. The test uses the saved settings: it
+checks that the API key is accepted and refreshes the user and library pickers
+from that server.
 
 Create the API key in the server's admin dashboard (in Jellyfin, under
 **Dashboard → API Keys**). Jellyfin 10.9 or later is required: earlier releases

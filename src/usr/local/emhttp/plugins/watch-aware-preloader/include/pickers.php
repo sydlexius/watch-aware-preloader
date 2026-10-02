@@ -31,18 +31,22 @@ function wap_read_pickers(string $path): ?array
 }
 
 /**
- * A cache is fresh when present and its server_url matches (trailing slash ignored).
+ * A cache is fresh when present and both its server_url (trailing slash ignored)
+ * and its server_type match. Switching the server type at the same URL must not
+ * keep showing the previous server's users and libraries. A cache written before
+ * server_type was recorded can only have come from Emby, the sole adapter then.
  *
  * @param array<string, mixed>|null $pickers
  */
-function wap_pickers_fresh(?array $pickers, string $serverUrl): bool
+function wap_pickers_fresh(?array $pickers, string $serverUrl, string $serverType = 'emby'): bool
 {
     if ($pickers === null) {
         return false;
     }
-    $cached = rtrim((string) ($pickers['server_url'] ?? ''), '/');
+    $cached     = rtrim((string) ($pickers['server_url'] ?? ''), '/');
+    $cachedType = (string) ($pickers['server_type'] ?? 'emby');
 
-    return $cached !== '' && $cached === rtrim($serverUrl, '/');
+    return $cached !== '' && $cached === rtrim($serverUrl, '/') && $cachedType === $serverType;
 }
 
 /**
