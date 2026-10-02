@@ -254,9 +254,11 @@ type warmRanges struct {
 }
 
 // planWarm computes the front-metadata, content (head), and tail ranges for an
-// item against its file size. For a seeking (resume) target it warms the exact
-// cue index and front metadata when the container parser can locate them,
-// falling back to the flat TailBytes tail otherwise. hostPath is the mapped
+// item against its file size. For a seeking (resume) target it warms the front
+// metadata and the cue index when the container parser can locate them - the
+// cue warm starts at the index and covers at most maxTailBytes of it, so an
+// oversized index has only its head warmed - falling back to the flat
+// TailBytes tail otherwise. hostPath is the mapped
 // on-host path used to inspect the container.
 func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) warmRanges {
 	cfg := p.cfg
@@ -312,9 +314,10 @@ func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) 
 }
 
 // inspectRanges parses the container front (for a seeking/resume target) to
-// locate the exact front-metadata and cue-tail ranges. parsed is false when
-// the target isn't seeking, no inspector is configured, or the parse failed;
-// callers then fall back to the flat tail.
+// locate the front-metadata and cue-tail ranges (the cue tail capped at
+// maxTailBytes from CueStart). parsed is false when the target isn't seeking,
+// no inspector is configured, or the parse failed; callers then fall back to
+// the flat tail.
 func (p *Preloader) inspectRanges(seeking bool, hostPath string, size, offset int64) (front, tailOffset, tail int64, parsed bool) {
 	if !seeking || p.inspect == nil {
 		return 0, 0, 0, false
@@ -365,7 +368,9 @@ func flatTail(size, tailBytes int64) (tailOffset, tail int64) {
 // clampTailToContent pulls the tail forward so it never overlaps the content
 // (head) window, keeping the budget accounting free of double-counted bytes.
 // The tail's end is preserved: a capped cue tail need not end at EOF, and
-// extending it there would undo the cap.
+// extending it there would undo the cap. Any part of the tail that falls inside
+// the content window is dropped rather than shifted, since the head warm
+// already covers it; a tail wholly inside the window collapses to zero.
 func clampTailToContent(tailOffset, tail, offset, head int64) (int64, int64) {
 	if tail > 0 && tailOffset < offset+head {
 		end := tailOffset + tail
