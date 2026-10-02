@@ -95,6 +95,25 @@ func TestValidateRejectsBadPercent(t *testing.T) {
 	}
 }
 
+func TestValidateServerType(t *testing.T) {
+	for _, tc := range []struct {
+		typ     string
+		wantErr bool
+	}{
+		{"emby", false},
+		{"jellyfin", false},
+		{"", true},
+		{"plex", true},
+		{"Jellyfin", true}, // the settings page writes lower case; anything else is a typo
+	} {
+		c := validBase()
+		c.Server.Type = tc.typ
+		if err := c.Validate(); (err != nil) != tc.wantErr {
+			t.Errorf("server.type %q: err = %v, wantErr %v", tc.typ, err, tc.wantErr)
+		}
+	}
+}
+
 // validBase returns a Config that passes Validate, so each sub-test can flip a
 // single field negative/zero and confirm it is the field under test that fails.
 func validBase() *Config {

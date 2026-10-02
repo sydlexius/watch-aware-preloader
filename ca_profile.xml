@@ -18,6 +18,6 @@
      <RepositoryInfo> spelling appears in this author's Docker templates repo and
      is NOT what the current starter uses. -->
 <CommunityApplications>
-  <Profile>Unraid plugins maintained by sydlexius. Watch-Aware Preloader warms the Linux page cache with the media each household user is most likely to play next, read from the media server's own watch state (resume points, next-up episodes, and recently-added), so playback starts instantly instead of waiting several seconds for an array disk to spin up. Emby is supported today; Jellyfin support is on the roadmap. Support is available via the project's GitHub Issues page.</Profile>
+  <Profile>Unraid plugins maintained by sydlexius. Watch-Aware Preloader warms the Linux page cache with the media each household user is most likely to play next, read from the media server's own watch state (resume points, next-up episodes, and recently-added), so playback starts instantly instead of waiting several seconds for an array disk to spin up. Emby and Jellyfin are supported. Support is available via the project's GitHub Issues page.</Profile>
   <WebPage>https://github.com/sydlexius/watch-aware-preloader</WebPage>
 </CommunityApplications>

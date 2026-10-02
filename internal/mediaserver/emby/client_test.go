@@ -81,7 +81,7 @@ func TestGetSendsTokenAndDecodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out struct{ Value int }
-	if err := c.get(context.Background(), "/Test", nil, &out); err != nil {
+	if err := c.api.Get(context.Background(), "/Test", nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if gotToken := <-tokenCh; gotToken != "secret" {
@@ -105,7 +105,7 @@ func TestGetErrorsOnNon200(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out struct{ Value int }
-		if err := c.get(context.Background(), "/x", nil, &out); err == nil {
+		if err := c.api.Get(context.Background(), "/x", nil, &out); err == nil {
 			t.Errorf("status %d: expected error, got nil", code)
 		}
 		srv.Close()
@@ -125,7 +125,7 @@ func TestGetNilOutSkipsDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.get(context.Background(), "/x", nil, nil); err != nil {
+	if err := c.api.Get(context.Background(), "/x", nil, nil); err != nil {
 		t.Errorf("nil out should skip decode and succeed, got %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestGetDoesNotFollowRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.get(context.Background(), "/x", nil, nil); err == nil {
+	if err := c.api.Get(context.Background(), "/x", nil, nil); err == nil {
 		t.Error("expected error: redirect must not be followed")
 	}
 	select {

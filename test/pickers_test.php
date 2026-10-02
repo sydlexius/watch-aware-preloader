@@ -33,6 +33,13 @@ check($p !== null, 'valid cache decodes');
 check(wap_pickers_fresh($p, 'http://tower:8096'), 'fresh when url matches');
 check(wap_pickers_fresh($p, 'http://tower:8096/'), 'fresh ignores trailing slash');
 check(!wap_pickers_fresh($p, 'http://other:8096'), 'stale when url differs');
+// A cache with no server_type predates Jellyfin support, so it came from Emby.
+check(wap_pickers_fresh($p, 'http://tower:8096', 'emby'), 'legacy cache (no type) is fresh for emby');
+check(!wap_pickers_fresh($p, 'http://tower:8096', 'jellyfin'), 'legacy cache (no type) is stale for jellyfin');
+$typed = $p;
+$typed['server_type'] = 'jellyfin';
+check(wap_pickers_fresh($typed, 'http://tower:8096', 'jellyfin'), 'fresh when url and type match');
+check(!wap_pickers_fresh($typed, 'http://tower:8096', 'emby'), 'stale when type differs at the same url');
 check(count(wap_picker_users($p)) === 1, 'users accessor');
 check(wap_picker_users($p)[0]['id'] === 'id-a', 'user id readable');
 check(count(wap_picker_libraries($p)) === 1, 'libraries accessor');

@@ -17,7 +17,6 @@ import (
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/diskresolve"
 	"github.com/doxazo-net/watch-aware-preloader/internal/estimate"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/pagecache"
 	"github.com/doxazo-net/watch-aware-preloader/internal/preloader"
 	"github.com/doxazo-net/watch-aware-preloader/internal/secrets"
@@ -91,9 +90,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	client, err := emby.New(cfg.Server.URL, apiKey, nil)
+	client, err := newProvider(cfg.Server, apiKey)
 	if err != nil {
-		log.Error("emby client init failed", "err", err)
+		log.Error("media server client init failed", "type", cfg.Server.Type, "err", err)
 		os.Exit(1)
 	}
 

@@ -525,6 +525,9 @@ chmod +x "$STUB_BIN"
 printf 'SERVER_URL="http://tower:8096"\n' >> "$WAP_FLASH/watch-aware-preloader.cfg"
 WAP_PICKERS_PATH="$work/pickers.json" WAP_BIN="$STUB_BIN" "$RC" write-pickers
 grep -q '"server_url": *"http://tower:8096"' "$work/pickers.json" || fail "server_url not in cache"
+# server_type is part of the cache identity, so switching type at one URL
+# cannot keep showing the previous server's users and libraries.
+grep -q '"server_type": *"emby"' "$work/pickers.json" || fail "server_type not in cache"
 grep -q '"id": "id-a"' "$work/pickers.json" || fail "users not merged"
 grep -q '"id": "lib-1"' "$work/pickers.json" || fail "libraries not merged"
 grep -q '"source": "docker"' "$work/pickers.json" || fail "pathmaps not merged"
@@ -544,6 +547,7 @@ import sys, json
 with open(sys.argv[1]) as fh:
     d = json.load(fh)
 assert d["server_url"] == 'http://tow"er:8096', d["server_url"]
+assert d["server_type"] == "emby", d.get("server_type")
 print("  pickers.json valid JSON, server_url round-trips (json)")
 PY
 fi
@@ -582,5 +586,38 @@ WAP_LASTTEST_PATH="$lasttest" bash "$RC" test || true
 [ -f "$lasttest" ] || fail "last-test.json not written on unreachable test"
 assert_contains "$lasttest" '"ok":false'
 assert_contains "$lasttest" 'not reachable'
+
+# Test connection sends the auth header the configured server type accepts.
+# A stub curl records its arguments and answers 200, so the authenticated
+# branch runs without a network. Jellyfin ignores X-Emby-Token unless its
+# legacy-authorization option is on, so it must get the MediaBrowser scheme.
+fakebin="$work/fakebin"
+mkdir -p "$fakebin"
+curl_log="$work/curl-args.log"
+cat > "$fakebin/curl" <<STUB
+#!/bin/bash
+printf '%s\n' "\$@" >> "$curl_log"
+printf '200'
+STUB
+chmod +x "$fakebin/curl"
+# The third case is a key with a quote, a comma and a space: Jellyfin splits the
+# header on quotes and commas, so it must arrive escaped exactly as the Go
+# adapter's url.QueryEscape escapes it.
+for case in 'emby|k-123|X-Emby-Token: k-123' \
+            'jellyfin|k-123|Authorization: MediaBrowser Token="k-123"' \
+            'jellyfin|a"b,c d|Authorization: MediaBrowser Token="a%22b%2Cc+d"'; do
+    type="${case%%|*}"
+    rest="${case#*|}"
+    key="${rest%%|*}"
+    want="${rest#*|}"
+    printf 'SERVER_TYPE="%s"\nSERVER_URL="http://tower:8096"\n' "$type" > "$WAP_FLASH/watch-aware-preloader.cfg"
+    : > "$curl_log"
+    EMBY_API_KEY="$key" WAP_BIN="$work/no-such-binary" WAP_LASTTEST_PATH="$lasttest" \
+        PATH="$fakebin:$PATH" bash "$RC" test >/dev/null || true
+    assert_contains "$curl_log" "$want"
+    if [ "$type" = "jellyfin" ]; then
+        assert_not_contains "$curl_log" "X-Emby-Token"
+    fi
+done
 
 echo "PASS: rc.preloadd render"

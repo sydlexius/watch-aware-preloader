@@ -9,9 +9,16 @@ import (
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
 )
 
+// Supported server.type values. Each names a media-server adapter; cmd/preloadd
+// maps the value to one, so internal/app stays vendor-neutral.
+const (
+	ServerEmby     = "emby"
+	ServerJellyfin = "jellyfin"
+)
+
 // ServerConfig holds the media-server connection parameters.
 type ServerConfig struct {
-	Type string `toml:"type"` // "emby" (Phase 1)
+	Type string `toml:"type"` // "emby" or "jellyfin"
 	URL  string `toml:"url"`
 }
 
@@ -317,8 +324,10 @@ func deriveLegacyOrder(legacyEnabled map[core.Tier]bool) TierOrder {
 
 // Validate checks required fields and ranges.
 func (c *Config) Validate() error {
-	if c.Server.Type != "emby" {
-		return fmt.Errorf("server.type must be \"emby\" in Phase 1, got %q", c.Server.Type)
+	switch c.Server.Type {
+	case ServerEmby, ServerJellyfin:
+	default:
+		return fmt.Errorf("server.type must be %q or %q, got %q", ServerEmby, ServerJellyfin, c.Server.Type)
 	}
 	if c.Server.URL == "" {
 		return fmt.Errorf("server.url is required")

@@ -86,7 +86,7 @@ tail, and how pool-resident content is treated - see
 
 - A native Unraid `.plg` plugin: one static Go binary (`preloadd`) plus a PHP
   settings page. No CGO, no runtime dependencies on the host.
-- **Emby** is supported today. Jellyfin support is on the roadmap.
+- Works with **Emby** and **Jellyfin**.
 - Runs as a **cron-invoked one-shot** (`preloadd -once`), like Fix Common
   Problems or the Mover. Each run is a fresh sweep, so library changes are
   picked up every interval. An optional `--daemon` mode adds sub-minute
