@@ -227,7 +227,7 @@ func (c *Config) applyDefaults(orderDefined bool, legacyEnabled map[core.Tier]bo
 	if c.Preload.TailMB == 0 {
 		// Flat tail warmed for every non-resume tier, and for resume targets
 		// whenever the container parser cannot locate the cue index (non-MKV or
-		// parse failure). MKV resume targets warm the exact cue region instead
+		// parse failure). MKV resume targets warm the cue region instead
 		// (see internal/container), so raising this default mainly affects the
 		// non-resume and fallback paths.
 		c.Preload.TailMB = 16

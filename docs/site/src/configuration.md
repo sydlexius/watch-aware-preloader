@@ -85,7 +85,10 @@ the *end* of the file, before it can seek. If that region is cold the disk spins
 up anyway and the resume stalls, which was measured at about 8.5 seconds.
 
 MKV resume targets are handled precisely: the plugin parses the container and
-warms the exact cue region rather than relying on `tail_mb`. The `tail_mb`
+warms the cue region rather than relying on `tail_mb`. The warm always starts
+at the beginning of the cue index and covers up to 64 MiB of it; an unusually
+large index (a long 4K remux with dense cues) has only its first 64 MiB warmed,
+which is the part the player reads first. The `tail_mb`
 value covers the other cases - non-MKV containers, a parse failure, and the
 non-resume tiers.
 

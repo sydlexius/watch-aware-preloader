@@ -254,9 +254,11 @@ type warmRanges struct {
 }
 
 // planWarm computes the front-metadata, content (head), and tail ranges for an
-// item against its file size. For a seeking (resume) target it warms the exact
-// cue index and front metadata when the container parser can locate them,
-// falling back to the flat TailBytes tail otherwise. hostPath is the mapped
+// item against its file size. For a seeking (resume) target it warms the front
+// metadata and the cue index when the container parser can locate them - the
+// cue warm starts at the index and covers at most maxTailBytes of it, so an
+// oversized index has only its head warmed - falling back to the flat
+// TailBytes tail otherwise. hostPath is the mapped
 // on-host path used to inspect the container.
 func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) warmRanges {
 	cfg := p.cfg
@@ -307,14 +309,15 @@ func (p *Preloader) planWarm(t core.PreloadTarget, hostPath string, size int64) 
 		tailOffset, tail = flatTail(size, p.cfg.TailBytes)
 	}
 	// The tail must not overlap the content window (keeps the budget accurate).
-	tailOffset, tail = clampTailToContent(tailOffset, tail, offset, head, size)
+	tailOffset, tail = clampTailToContent(tailOffset, tail, offset, head)
 	return warmRanges{front: front, offset: offset, head: head, tailOffset: tailOffset, tail: tail}
 }
 
 // inspectRanges parses the container front (for a seeking/resume target) to
-// locate the exact front-metadata and cue-tail ranges. parsed is false when
-// the target isn't seeking, no inspector is configured, or the parse failed;
-// callers then fall back to the flat tail.
+// locate the front-metadata and cue-tail ranges (the cue tail capped at
+// maxTailBytes from CueStart). parsed is false when the target isn't seeking,
+// no inspector is configured, or the parse failed; callers then fall back to
+// the flat tail.
 func (p *Preloader) inspectRanges(seeking bool, hostPath string, size, offset int64) (front, tailOffset, tail int64, parsed bool) {
 	if !seeking || p.inspect == nil {
 		return 0, 0, 0, false
@@ -339,12 +342,15 @@ func (p *Preloader) inspectRanges(seeking bool, hostPath string, size, offset in
 	}
 	// A trailing cue index needs its own tail warm; a front-placed cue index
 	// is already covered by the front-metadata window.
+	//
+	// The warm always STARTS at CueStart. When the cue region is larger than
+	// maxTailBytes the cap trims its far end, not its beginning: the player
+	// reads the index from CueStart forward before it can seek, so a warm
+	// that begins partway into the index leaves the first read cold and the
+	// disk spins up anyway (#143).
 	if layout.CueStart >= front && layout.CueStart < size {
 		tailOffset = layout.CueStart
-		if tailOffset < size-maxTailBytes {
-			tailOffset = size - maxTailBytes
-		}
-		tail = size - tailOffset
+		tail = min(size-tailOffset, maxTailBytes)
 	}
 	return front, tailOffset, tail, true
 }
@@ -361,13 +367,15 @@ func flatTail(size, tailBytes int64) (tailOffset, tail int64) {
 
 // clampTailToContent pulls the tail forward so it never overlaps the content
 // (head) window, keeping the budget accounting free of double-counted bytes.
-func clampTailToContent(tailOffset, tail, offset, head, size int64) (int64, int64) {
+// The tail's end is preserved: a capped cue tail need not end at EOF, and
+// extending it there would undo the cap. Any part of the tail that falls inside
+// the content window is dropped rather than shifted, since the head warm
+// already covers it; a tail wholly inside the window collapses to zero.
+func clampTailToContent(tailOffset, tail, offset, head int64) (int64, int64) {
 	if tail > 0 && tailOffset < offset+head {
+		end := tailOffset + tail
 		tailOffset = offset + head
-		tail = size - tailOffset
-		if tail < 0 {
-			tail = 0
-		}
+		tail = max(end-tailOffset, 0)
 	}
 	return tailOffset, tail
 }
