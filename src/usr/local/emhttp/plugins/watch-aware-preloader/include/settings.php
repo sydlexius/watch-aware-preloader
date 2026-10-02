@@ -229,7 +229,7 @@ function wap_sanitize_settings_post(array &$post): void
     // Only shipped adapters are accepted; anything else falls back to emby, the
     // default, rather than writing a type the engine would refuse to start on.
     $type = $post['SERVER_TYPE'] ?? '';
-    $post['SERVER_TYPE'] = in_array($type, ['emby', 'jellyfin'], true) ? $type : 'emby';
+    $post['SERVER_TYPE'] = \in_array($type, ['emby', 'jellyfin'], true) ? $type : 'emby';
 
     $url = wap_cfg_sanitize_str((string) ($post['SERVER_URL'] ?? ''));
     $post['SERVER_URL'] = ($url === '') ? 'http://localhost:8096' : $url;
