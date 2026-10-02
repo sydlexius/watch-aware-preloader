@@ -504,11 +504,23 @@ write_last_test() {
     fi
 }
 
+# auth_header TYPE TOKEN -> the request header that authenticates TOKEN on a
+# server of TYPE. Jellyfin reads X-Emby-Token only when its legacy
+# authorization option is on, which it is not by default, so it gets the
+# "MediaBrowser" Authorization scheme instead (mirrors internal/mediaserver).
+auth_header() {
+    if [ "$1" = "jellyfin" ]; then
+        printf 'Authorization: MediaBrowser Token="%s"' "$2"
+    else
+        printf 'X-Emby-Token: %s' "$2"
+    fi
+}
+
 # test_connection: reach the server's public endpoint, then (if a key is set)
 # the authenticated endpoint. Prints a human line for the webGui progress popup
 # AND persists the outcome via write_last_test (#36) for the settings page.
 test_connection() {
-    local src="${CFG}" url token code msg
+    local src="${CFG}" url token code msg auth
     [ -f "$src" ] || src="${DEFAULT_CFG}"
     url="$(cfg_get "$src" SERVER_URL "")"
     if [ -z "$url" ]; then
@@ -532,7 +544,8 @@ test_connection() {
         write_last_test true "$msg" || true
         return 0
     fi
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "X-Emby-Token: ${token}" "${url}/System/Info" || true)"
+    auth="$(auth_header "$(cfg_get "$src" SERVER_TYPE emby)" "$token")"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "$auth" "${url}/System/Info" || true)"
     if [ "$code" = "200" ]; then
         msg="OK: server reachable and API key accepted."
         echo "$msg"

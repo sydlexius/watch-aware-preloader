@@ -71,7 +71,7 @@ Full detail: **[How it works](https://sydlexius.github.io/watch-aware-preloader/
 ## What it is
 
 - Native Unraid `.plg` plugin: a single static Go binary (`preloadd`) + a PHP settings page.
-- Supports **Emby** (Jellyfin support is on the roadmap).
+- Supports **Emby** and **Jellyfin**.
 - Runs as a **cron-invoked one-shot** (`preloadd -once`) like Fix Common Problems and the Mover -
   each run is a fresh sweep, so library changes are picked up every interval. An optional `--daemon`
   mode adds sub-minute reaction for those who want it.

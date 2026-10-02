@@ -583,4 +583,30 @@ WAP_LASTTEST_PATH="$lasttest" bash "$RC" test || true
 assert_contains "$lasttest" '"ok":false'
 assert_contains "$lasttest" 'not reachable'
 
+# Test connection sends the auth header the configured server type accepts.
+# A stub curl records its arguments and answers 200, so the authenticated
+# branch runs without a network. Jellyfin ignores X-Emby-Token unless its
+# legacy-authorization option is on, so it must get the MediaBrowser scheme.
+fakebin="$work/fakebin"
+mkdir -p "$fakebin"
+curl_log="$work/curl-args.log"
+cat > "$fakebin/curl" <<STUB
+#!/bin/bash
+printf '%s\n' "\$@" >> "$curl_log"
+printf '200'
+STUB
+chmod +x "$fakebin/curl"
+for case in 'emby|X-Emby-Token: k-123' 'jellyfin|Authorization: MediaBrowser Token="k-123"'; do
+    type="${case%%|*}"
+    want="${case#*|}"
+    printf 'SERVER_TYPE="%s"\nSERVER_URL="http://tower:8096"\n' "$type" > "$WAP_FLASH/watch-aware-preloader.cfg"
+    : > "$curl_log"
+    EMBY_API_KEY="k-123" WAP_BIN="$work/no-such-binary" WAP_LASTTEST_PATH="$lasttest" \
+        PATH="$fakebin:$PATH" bash "$RC" test >/dev/null || true
+    assert_contains "$curl_log" "$want"
+    if [ "$type" = "jellyfin" ]; then
+        assert_not_contains "$curl_log" "X-Emby-Token"
+    fi
+done
+
 echo "PASS: rc.preloadd render"

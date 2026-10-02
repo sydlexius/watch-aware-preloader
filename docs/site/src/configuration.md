@@ -9,6 +9,17 @@ every save and every boot.
     It is generated from your settings, so hand edits are silently overwritten
     on the next save or reboot. Change settings in the webGui.
 
+## Media server
+
+Pick **Emby** or **Jellyfin** as the server type and enter the server's base
+URL, for example `http://tower:8096`. Run **Test connection** after changing
+either one: it checks that the API key is accepted and refreshes the user and
+library pickers from the new server.
+
+Create the API key in the server's admin dashboard (in Jellyfin, under
+**Dashboard → API Keys**). Jellyfin 10.9 or later is required: earlier releases
+lack the per-user routes the plugin queries.
+
 ## Credentials
 
 Your media server API key is a secret and is deliberately kept out of
@@ -20,7 +31,8 @@ Your media server API key is a secret and is deliberately kept out of
   into the write-only API-key field. The repository ships
   [`secrets.example.toml`](https://github.com/sydlexius/watch-aware-preloader/blob/main/secrets.example.toml)
   showing the expected shape, for anyone configuring it by hand.
-- **The `EMBY_API_KEY` environment variable**, which overrides the file.
+- **The `EMBY_API_KEY` environment variable**, which overrides the file. The
+  name predates Jellyfin support; it holds the key for either server type.
 
 `config.toml` must not contain `api_key`. The engine refuses to start if it does,
 rather than running with a secret in a file that is not meant to hold one. You

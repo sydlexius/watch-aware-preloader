@@ -219,15 +219,17 @@ function wap_apply_override_removals(array &$post, array &$keys): void
  * bounded .cfg. Only the fields the form posts are touched; every other engine
  * default is left to rc.preloadd's cfg_get fallbacks. Numeric fields are clamped
  * to their valid ranges; string fields are sanitized; SERVER_TYPE is constrained
- * to the only adapter shipping in Phase 2 so a spoofed value cannot select an
+ * to a shipped adapter (emby or jellyfin) so a spoofed value cannot select an
  * unsupported server.
  *
  * @param array<string, mixed> $post the request map (typically $_POST), mutated in place
  */
 function wap_sanitize_settings_post(array &$post): void
 {
-    // Only the Emby adapter ships in Phase 2, so pin it regardless of input.
-    $post['SERVER_TYPE'] = 'emby';
+    // Only shipped adapters are accepted; anything else falls back to emby, the
+    // default, rather than writing a type the engine would refuse to start on.
+    $type = $post['SERVER_TYPE'] ?? '';
+    $post['SERVER_TYPE'] = in_array($type, ['emby', 'jellyfin'], true) ? $type : 'emby';
 
     $url = wap_cfg_sanitize_str((string) ($post['SERVER_URL'] ?? ''));
     $post['SERVER_URL'] = ($url === '') ? 'http://localhost:8096' : $url;

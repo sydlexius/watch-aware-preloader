@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/doxazo-net/watch-aware-preloader/internal/app"
 	"github.com/doxazo-net/watch-aware-preloader/internal/config"
 	"github.com/doxazo-net/watch-aware-preloader/internal/core"
-	"github.com/doxazo-net/watch-aware-preloader/internal/mediaserver/emby"
 	"github.com/doxazo-net/watch-aware-preloader/internal/secrets"
 )
 
@@ -32,11 +32,11 @@ func dispatchSubcommand(args []string) bool {
 	return false
 }
 
-// runListSubcommand queries the configured Emby server and emits list-users /
+// runListSubcommand queries the configured media server and emits list-users /
 // list-libraries JSON. Read-only; the API key is never written to output.
 func runListSubcommand(name, cfgPath string) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	client, err := newEmbyClient(cfgPath)
+	client, err := newListClient(cfgPath)
 	if err != nil {
 		log.Error(name+" failed: client init", "err", err)
 		os.Exit(1)
@@ -62,11 +62,11 @@ func runListSubcommand(name, cfgPath string) {
 	}
 }
 
-// newEmbyClient builds a read-only Emby client from the config at cfgPath and
-// its secret store. Used by the list-users / list-libraries diagnostic
+// newListClient builds a read-only media-server client (the adapter
+// server.type names) from the config at cfgPath and its secret store. Used by the list-users / list-libraries diagnostic
 // subcommands (the server-query backend the settings UI renders). The API key
 // is loaded into the client but never written to output.
-func newEmbyClient(cfgPath string) (*emby.Client, error) {
+func newListClient(cfgPath string) (app.Provider, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func newEmbyClient(cfgPath string) (*emby.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return emby.New(cfg.Server.URL, apiKey, nil)
+	return newProvider(cfg.Server, apiKey)
 }
 
 type userJSON struct {

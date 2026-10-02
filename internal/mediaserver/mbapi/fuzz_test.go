@@ -1,9 +1,9 @@
-package emby
+package mbapi
 
 import "testing"
 
 // FuzzValidateBaseURL checks that the base-URL trust-boundary validator never
-// panics on arbitrary input. validateBaseURL parses attacker-influenced
+// panics on arbitrary input. ValidateBaseURL parses attacker-influenced
 // configuration and must reject anything unsafe with an error, never crash on a
 // malformed URL. A returned error is the expected outcome for invalid input.
 func FuzzValidateBaseURL(f *testing.F) {
@@ -28,9 +28,9 @@ func FuzzValidateBaseURL(f *testing.F) {
 	f.Fuzz(func(t *testing.T, raw string) {
 		// Contract under test: no panic. When validation succeeds the returned
 		// URL must be non-nil; otherwise any error is acceptable.
-		u, err := validateBaseURL(raw)
+		u, err := ValidateBaseURL(raw)
 		if err == nil && u == nil {
-			t.Fatalf("validateBaseURL returned nil URL and nil error for %q", raw)
+			t.Fatalf("ValidateBaseURL returned nil URL and nil error for %q", raw)
 		}
 	})
 }

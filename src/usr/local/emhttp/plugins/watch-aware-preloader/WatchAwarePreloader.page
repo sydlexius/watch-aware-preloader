@@ -296,16 +296,17 @@ if ($wapEstimate !== null) {
     <dd>
         <select id="wap_server_type" name="SERVER_TYPE" size="1">
             <option value="emby"<?= (($wapCfg['SERVER_TYPE'] ?? 'emby') === 'emby') ? ' selected' : '' ?>>Emby</option>
+            <option value="jellyfin"<?= (($wapCfg['SERVER_TYPE'] ?? 'emby') === 'jellyfin') ? ' selected' : '' ?>>Jellyfin</option>
         </select>
     </dd>
 </dl>
-<blockquote class="inline_help">Jellyfin support arrives in Phase 3.</blockquote>
+<blockquote class="inline_help">The media server the watch state is read from. Run Test connection after changing it to refresh the user and library pickers.</blockquote>
 
 <dl>
     <dt><label for="wap_server_url">Server URL</label></dt>
     <dd><input type="text" id="wap_server_url" name="SERVER_URL" value="<?= htmlspecialchars((string) ($wapCfg['SERVER_URL'] ?? 'http://localhost:8096')) ?>"></dd>
 </dl>
-<blockquote class="inline_help">Base URL of your Emby server, e.g. http://tower:8096</blockquote>
+<blockquote class="inline_help">Base URL of your Emby or Jellyfin server, e.g. http://tower:8096</blockquote>
 
 <dl>
     <dt>Users to preload</dt>
@@ -600,7 +601,7 @@ if ($wapMapRows === []) {
 
 <dl>
     <dt><label for="wap_api_key">API key <?= $wapKeySet ? '(currently: set)' : '(currently: not set)' ?></label></dt>
-    <dd><input type="password" id="wap_api_key" name="#api_key" autocomplete="new-password" placeholder="<?= $wapKeySet ? 'leave blank to keep the current key' : 'paste your Emby API key' ?>"></dd>
+    <dd><input type="password" id="wap_api_key" name="#api_key" autocomplete="new-password" placeholder="<?= $wapKeySet ? 'leave blank to keep the current key' : 'paste your Emby or Jellyfin API key' ?>"></dd>
 </dl>
 <blockquote class="inline_help">Stored in secrets.toml, never in the settings file and never shown here. Leave blank to keep the current key; tick the box below to remove it.</blockquote>
 

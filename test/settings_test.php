@@ -39,7 +39,7 @@ check(wap_cfg_clamp_int('  25  ', 1, 100, 10) === 25, 'clamp tolerates surroundi
 
 // --- wap_sanitize_settings_post: normalizes $_POST in place for /update.php ---
 $post = [
-    'SERVER_TYPE'    => 'jellyfin',                     // spoofed -> pinned to emby
+    'SERVER_TYPE'    => 'plex',                         // unsupported -> emby
     'SERVER_URL'     => "http://tower:8096\n",          // trailing newline stripped
     'USERS'          => 'alice, bob',
     'RAM_PERCENT'    => '999',                          // clamped to 100
@@ -48,7 +48,15 @@ $post = [
     'CRON_INTERVAL'  => '0',                            // clamped to 1
 ];
 wap_sanitize_settings_post($post);
-check($post['SERVER_TYPE'] === 'emby', 'server type pinned to emby');
+check($post['SERVER_TYPE'] === 'emby', 'unsupported server type falls back to emby');
+foreach (['emby', 'jellyfin'] as $wapType) {
+    $typed = ['SERVER_TYPE' => $wapType];
+    wap_sanitize_settings_post($typed);
+    check($typed['SERVER_TYPE'] === $wapType, "server type $wapType kept");
+}
+$typed = ['SERVER_TYPE' => ['jellyfin']];
+wap_sanitize_settings_post($typed);
+check($typed['SERVER_TYPE'] === 'emby', 'non-string server type falls back to emby');
 check($post['SERVER_URL'] === 'http://tower:8096', 'server url sanitized');
 check($post['USERS'] === 'alice, bob', 'users preserved');
 check($post['RAM_PERCENT'] === '100', 'ram clamped to max (string)');
@@ -60,6 +68,7 @@ check($post['CRON_INTERVAL'] === '1', 'cron clamped to min (string)');
 $empty = [];
 wap_sanitize_settings_post($empty);
 check($empty['SERVER_URL'] === 'http://localhost:8096', 'default server url');
+check($empty['SERVER_TYPE'] === 'emby', 'default server type emby');
 check($empty['USERS'] === '', 'default users empty');
 check($empty['RAM_PERCENT'] === '50', 'default ram 50');
 check($empty['CRON_INTERVAL'] === '15', 'default cron 15');
