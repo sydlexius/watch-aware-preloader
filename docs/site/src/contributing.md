@@ -124,7 +124,83 @@ that was permanently inert while every test passed.
 CI runs the Go build, tests, lint, `govulncheck`, CodeQL, the PHP lint, and the
 plugin packaging smoke tests. Most of those also run locally via
 `scripts/pre-push-gate.sh`, so a PR should not be the first place a failure
-shows up - `govulncheck` and CodeQL are CI-only.
+shows up. `govulncheck` is not part of the pre-push gate: run `make vulncheck`
+yourself (CI runs it too). CodeQL is CI-only.
 
 Bot review runs on every PR. Findings get a fix, a tracked deferral, or a
 written rebuttal - never a silent drop.
+
+## Releasing
+
+Releases are cut by the maintainer by pushing a version tag. There is no
+version file to bump: the tag name is the version.
+
+### Version numbers
+
+Versions are calendar dates, using the real date the release is cut:
+
+- `YYYY.MM.DD` for the first release of the day, for example `2026.09.02`
+- `YYYY.MM.DD.N` for each further release that same day, for example
+  `2026.09.02.1` - never the next day's date
+
+Versions are digits and dots only. Slackware, whose package format the plugin
+installs with, does not allow letters in a version, so a suffix such as `-rc1`
+is not available.
+
+### Cutting a release
+
+Tag the commit on `main` with an annotated tag and push the tag:
+
+```bash
+git tag -a 2026.09.02 -m "Short summary of what this release changes"
+git push origin 2026.09.02
+```
+
+Tag from an up-to-date `main`; nothing in the workflow checks that the tagged
+commit is the current tip of `main`.
+
+The tag message matters: it becomes the changelog shown in the Unraid plugin
+manager, so write it for the people installing the update.
+
+### What the release workflow does
+
+Pushing a tag that starts with a digit runs `.github/workflows/release.yml`,
+which:
+
+1. Builds the static `linux/amd64` `preloadd` binary into the plugin tree
+   (`plugin/build.sh`), stamped with the tag as its version, using the latest
+   patch of the Go line named in `.github/go-version` (for example `1.27.x`).
+   The workflow sets `check-latest`, so the exact patch is not pinned.
+2. Packages `src/` as `watch-aware-preloader-<version>-noarch-1.txz` and
+   computes its SHA-256 checksum.
+3. Renders `watch-aware-preloader.plg` from `plugin/plugin.j2`, filling in the
+   version, the checksum, and the tag message as the `<CHANGES>` block (or
+   `Release <version>` if the message is empty). The render fails if the version
+   or checksum is missing from the result, or if the `.plg` is not well-formed
+   XML.
+4. Refuses to publish unless the tag is strictly numeric with three or four
+   dot-separated parts.
+5. Creates a draft GitHub Release titled with the version, attaches the `.txz`,
+   its `.sha256`, and the `.plg`, then publishes it. Drafting first is required
+   because releases in this repository are immutable once published, so assets
+   cannot be added afterwards.
+
+A published release is immutable. If the workflow fails after the tag push,
+check the release state before deleting anything
+(`gh release view <tag> --json isDraft`), because the publish step can succeed
+on GitHub even when the workflow reports an error. Only if the release is still
+a draft, delete it and the tag (locally and on the remote) and tag again. If it
+is already published, keep the tag and do not retry; fix the problem in a new
+release instead.
+
+Every release is published as the latest release, never as a prerelease (the
+four `2026.06.30.x` builds were prereleases under an earlier version of the
+workflow). Installed copies check
+`releases/latest/download/watch-aware-preloader.plg` for updates, and GitHub
+leaves prereleases out of `releases/latest`.
+
+The workflow writes a one-line placeholder as the release notes. Replace it by
+hand with the full notes on the release page, which is then the record of what
+the release contains; nothing enforces this step, and several older releases
+still show only the placeholder. `CHANGELOG.md` at the repository root is a
+short index that points back to those pages.

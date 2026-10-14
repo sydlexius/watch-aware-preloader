@@ -5,8 +5,9 @@ name: Release Unraid Plugin
 #   YYYY.MM.DD     -> release
 #   YYYY.MM.DD.N   -> test/iteration build (for install-testing)
 #
-# Every tag now publishes as a full GitHub "latest" release (none is marked
-# prerelease). GitHub excludes prereleases from releases/latest, so the Unraid
+# Every tag publishes as a full GitHub "latest" release, never a prerelease (the
+# four 2026.06.30.x builds were prereleases under an earlier version of this
+# workflow). GitHub excludes prereleases from releases/latest, so the Unraid
 # update check that fetches releases/latest/download/watch-aware-preloader.plg
 # only resolves when the newest release is a full/latest release.
 #
@@ -74,9 +75,16 @@ jobs:
           PLUGIN_CHECKSUM: ${{ steps.pkg.outputs.checksum }}
         run: |
           set -euo pipefail
-          changelog="$(git tag -l --format='%(contents)' "${PLUGIN_VERSION}")"
+          # Subject and body only: %(contents) would also emit the armored
+          # signature of a signed tag (#171). See plugin/tag-changelog.sh.
+          changelog="$(./plugin/tag-changelog.sh "${PLUGIN_VERSION}")"
           if [ -z "${changelog}" ]; then
             changelog="Release ${PLUGIN_VERSION}"
+          fi
+          # Defense in depth: never publish signature armor in the changelog.
+          if printf '%s' "${changelog}" | grep -Eq -- '-----BEGIN (SSH|PGP) SIGNATURE-----'; then
+            echo "render check failed: changelog contains a tag signature block" >&2
+            exit 1
           fi
           # The changelog is injected into a <![CDATA[ ... ]]> block. A literal
           # "]]>" in the tag message would terminate the CDATA early and yield a

@@ -32,6 +32,11 @@ make php-lint   # only if you touched plugin/ PHP
 - Commits: small and focused. Don't commit secrets - `config.toml` and
   `*.local.toml` are gitignored for that reason.
 
+## Conduct and releases
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Notable
+changes per release are indexed in the [changelog](CHANGELOG.md).
+
 ## Design
 
 Substantive changes should trace back to the project's design of record.
