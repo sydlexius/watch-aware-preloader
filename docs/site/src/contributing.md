@@ -128,3 +128,64 @@ shows up - `govulncheck` and CodeQL are CI-only.
 
 Bot review runs on every PR. Findings get a fix, a tracked deferral, or a
 written rebuttal - never a silent drop.
+
+## Releasing
+
+Releases are cut by the maintainer by pushing a version tag. There is no
+version file to bump: the tag name is the version.
+
+### Version numbers
+
+Versions are calendar dates, using the real date the release is cut:
+
+- `YYYY.MM.DD` for the first release of the day, for example `2026.09.02`
+- `YYYY.MM.DD.N` for each further release that same day, for example
+  `2026.09.02.1` - never the next day's date
+
+Versions are digits and dots only. Slackware, whose package format the plugin
+installs with, does not allow letters in a version, so a suffix such as `-rc1`
+is not available.
+
+### Cutting a release
+
+Tag the commit on `main` with an annotated tag and push the tag:
+
+```bash
+git tag -a 2026.09.02 -m "Short summary of what this release changes"
+git push origin 2026.09.02
+```
+
+The tag message matters: it becomes the changelog shown in the Unraid plugin
+manager, so write it for the people installing the update.
+
+### What the release workflow does
+
+Pushing a tag that starts with a digit runs `.github/workflows/release.yml`,
+which:
+
+1. Builds the static `linux/amd64` `preloadd` binary into the plugin tree
+   (`plugin/build.sh`), stamped with the tag as its version, using the Go
+   version in `.github/go-version`.
+2. Packages `src/` as `watch-aware-preloader-<version>-noarch-1.txz` and
+   computes its SHA-256 checksum.
+3. Renders `watch-aware-preloader.plg` from `plugin/plugin.j2`, filling in the
+   version, the checksum, and the tag message as the `<CHANGES>` block (or
+   `Release <version>` if the message is empty). The render fails if the version
+   or checksum is missing from the result, or if the `.plg` is not well-formed
+   XML.
+4. Refuses to publish unless the tag is strictly numeric with three or four
+   dot-separated parts.
+5. Creates a draft GitHub Release titled with the version, attaches the `.txz`,
+   its `.sha256`, and the `.plg`, then publishes it. Drafting first is required
+   because releases in this repository are immutable once published, so assets
+   cannot be added afterwards.
+
+Every release is published as the latest release, never as a prerelease.
+Installed copies check
+`releases/latest/download/watch-aware-preloader.plg` for updates, and GitHub
+leaves prereleases out of `releases/latest`.
+
+The workflow writes a one-line placeholder as the release notes. Those notes are
+then replaced by hand with the full notes on the release page, which is the
+record of what each release contains. `CHANGELOG.md` at the repository root is a
+short index that points back to those pages.
