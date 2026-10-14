@@ -31,6 +31,22 @@ type Provider interface {
 	NowPlayingIDs(ctx context.Context) (map[string]bool, error)
 }
 
+// withMediaFile drops items with no media file path: container entries (a
+// Series or Season a server returns alongside its episodes) and placeholder
+// episodes. There is nothing to warm for them, and left in they would occupy a
+// tier's MaxItems slots ahead of real files and surface as phantom targets
+// (#170). It is the ONE guard for every tier, applied before capItems, so the
+// cap counts only warmable items. It never writes into the adapter's slice.
+func withMediaFile(items []core.MediaItem) []core.MediaItem {
+	out := make([]core.MediaItem, 0, len(items))
+	for _, it := range items {
+		if it.ServerPath != "" {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
 // capItems returns at most limit items (in the server's order, which is
 // relevance-ordered per tier). limit <= 0 means no cap.
 func capItems(items []core.MediaItem, limit int) []core.MediaItem {
@@ -88,7 +104,7 @@ func CollectCandidates(ctx context.Context, p Provider, users []core.User, enabl
 			if err != nil {
 				return nil, nil, err
 			}
-			for _, it := range capItems(items, tiers.Dial(tier).MaxItems) {
+			for _, it := range capItems(withMediaFile(items), tiers.Dial(tier).MaxItems) {
 				// Stamp UserID here rather than trusting the adapter to: ranking
 				// keys every per-user decision off it, and RankOpts.slot answers an
 				// unstamped item with a silent skip, so a forgetful adapter would

@@ -78,9 +78,9 @@ func (s *stubProvider) NowPlayingIDs(context.Context) (map[string]bool, error) {
 func TestCollectCandidatesTiersAndPlaying(t *testing.T) {
 	p := &stubProvider{
 		users:   []core.User{{ID: "1", Name: "jesse"}},
-		resume:  map[string][]core.MediaItem{"1": {{ID: "r1"}}},
-		nextUp:  map[string][]core.MediaItem{"1": {{ID: "n1"}}},
-		latest:  map[string][]core.MediaItem{"1": {{ID: "l1"}}},
+		resume:  map[string][]core.MediaItem{"1": {{ID: "r1", ServerPath: "/m/r1"}}},
+		nextUp:  map[string][]core.MediaItem{"1": {{ID: "n1", ServerPath: "/m/n1"}}},
+		latest:  map[string][]core.MediaItem{"1": {{ID: "l1", ServerPath: "/m/l1"}}},
 		playing: map[string]bool{"x": true},
 	}
 	cands, playing, err := CollectCandidates(context.Background(), p, p.users, nil, allTiers(), allTiersRanked(p.users), nil, discardLog())
@@ -144,9 +144,9 @@ func TestCollectCandidatesLibraryScope(t *testing.T) {
 func TestCollectCandidatesTierDials(t *testing.T) {
 	p := &stubProvider{
 		users:  []core.User{{ID: "1", Name: "jesse"}},
-		resume: map[string][]core.MediaItem{"1": {{ID: "r1"}}},
-		nextUp: map[string][]core.MediaItem{"1": {{ID: "n1"}}},
-		latest: map[string][]core.MediaItem{"1": {{ID: "l1"}, {ID: "l2"}, {ID: "l3"}}},
+		resume: map[string][]core.MediaItem{"1": {{ID: "r1", ServerPath: "/m/r1"}}},
+		nextUp: map[string][]core.MediaItem{"1": {{ID: "n1", ServerPath: "/m/n1"}}},
+		latest: map[string][]core.MediaItem{"1": {{ID: "l1", ServerPath: "/m/l1"}, {ID: "l2", ServerPath: "/m/l2"}, {ID: "l3", ServerPath: "/m/l3"}}},
 	}
 	// Disable next-up entirely; cap recently-added to 2; keep resume on. The
 	// order carries enablement (next-up is absent from it); the dials carry caps.
@@ -180,6 +180,24 @@ func TestCollectCandidatesTierDials(t *testing.T) {
 	}
 	if len(cands) != 3 { // r1 + l1 + l2
 		t.Errorf("expected 3 candidates (resume 1 + recently-added 2), got %d", len(cands))
+	}
+}
+
+func TestCollectCandidatesDropsItemsWithNoMediaFileBeforeTheCap(t *testing.T) {
+	// #170: a server can return a Series and a Season ahead of the in-progress
+	// episode. They have no file, so they must not take the Resume cap's slots.
+	p := &stubProvider{
+		users:  []core.User{{ID: "1", Name: "jesse"}},
+		resume: map[string][]core.MediaItem{"1": {{ID: "series"}, {ID: "season"}, {ID: "ep", ServerPath: "/m/ep"}}},
+	}
+	tiers := config.TiersConfig{Resume: config.TierDial{MaxItems: 2}, Order: config.TierOrder{core.TierResume}}
+	ranks := ResolveRanks(&config.Config{Tiers: tiers}, p.users, discardLog())
+	cands, _, err := CollectCandidates(context.Background(), p, p.users, nil, tiers, ranks, nil, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].Item.ID != "ep" {
+		t.Fatalf("candidates = %+v, want only the episode", cands)
 	}
 }
 
@@ -236,7 +254,7 @@ func TestCollectCandidatesStampsUserID(t *testing.T) {
 	// that forgot the field would warm nothing and still report a clean sweep.
 	p := &stubProvider{
 		users:  []core.User{{ID: "id-a", Name: "Alice"}},
-		resume: map[string][]core.MediaItem{"id-a": {{ID: "r1"}}}, // UserID deliberately unset
+		resume: map[string][]core.MediaItem{"id-a": {{ID: "r1", ServerPath: "/m/r1"}}}, // UserID deliberately unset
 	}
 	cands, _, err := CollectCandidates(context.Background(), p, p.users, nil, allTiers(), allTiersRanked(p.users), nil, discardLog())
 	if err != nil {

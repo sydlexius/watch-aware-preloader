@@ -85,6 +85,23 @@ func TestProjectWarmSetFullUniverse(t *testing.T) {
 	}
 }
 
+func TestProjectWarmSetNoPhantomRows(t *testing.T) {
+	// #170: container entries and placeholders (no media file) never become rows.
+	p := &stubProvider{
+		users: []core.User{{ID: "3", Name: "jesse"}},
+		resume: map[string][]core.MediaItem{"3": {
+			{ID: "series"}, {ID: "season"}, {ID: "ep", ServerPath: "/mnt/user/TV/ep.mkv", BitrateBps: 8_000_000},
+		}},
+	}
+	est, err := ProjectWarmSet(context.Background(), p, estCfg(), 16<<30, 50, "2026-07-10T00:00:00Z", pathmap.New(nil).ToHost, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(est.Rows) != 1 {
+		t.Fatalf("rows = %+v, want only the episode", est.Rows)
+	}
+}
+
 func TestProjectWarmSetUnattributableLibraryIsBlank(t *testing.T) {
 	// Item path under no known library location -> l == "".
 	p := &stubProvider{
