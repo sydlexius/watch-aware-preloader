@@ -71,8 +71,19 @@ command -v ssh-keygen >/dev/null || fail "ssh-keygen required for the signed-tag
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "${SCRATCH}"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# Git exports GIT_DIR (and friends) to hooks, and this test runs inside the
+# pre-push hook. Inherited, they would point every git command below at the REAL
+# repository - writing the throwaway identity and signing key into its
+# .git/config - instead of the scratch repo. Clear them, disable hooks in the
+# scratch repo, and refuse to continue unless git really resolves to it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE GIT_CEILING_DIRECTORIES
 ssh-keygen -q -t ed25519 -N '' -f "${SCRATCH}/key" >/dev/null
 git init -q "${SCRATCH}/repo"
+git -C "${SCRATCH}/repo" config core.hooksPath /dev/null
+scratch_gitdir="$(cd "${SCRATCH}/repo" && cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
+[ "${scratch_gitdir}" = "$(cd "${SCRATCH}/repo/.git" && pwd -P)" ] \
+    || fail "test setup: git resolves to ${scratch_gitdir}, not the scratch repo; refusing to write config"
 (
     cd "${SCRATCH}/repo"
     git config user.name t
