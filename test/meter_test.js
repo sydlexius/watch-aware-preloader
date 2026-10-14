@@ -50,4 +50,14 @@ a = wapAggregate(rows, 1000, { users: new Set(), libraries: new Set(), tiers: t2
 assert.strictEqual(a.count, 3); // 1 resume (capped) + next-up + recently-added
 assert.strictEqual(a.projected, 300);
 
+// Binge look-ahead rows count only while that tier is ticked (it is off by
+// default, but the estimate projects it so ticking it moves the meter).
+const bingeRows = rows.concat([{ u: '7', t: 'binge-ahead', l: 'L2', b: 50, r: 4 }]);
+const t3 = T(); t3['binge-ahead'] = { enabled: false, max: 0 };
+a = wapAggregate(bingeRows, 1000, { users: new Set(), libraries: new Set(), tiers: t3 });
+assert.strictEqual(a.projected, 400);
+t3['binge-ahead'].enabled = true;
+a = wapAggregate(bingeRows, 1000, { users: new Set(), libraries: new Set(), tiers: t3 });
+assert.strictEqual(a.projected, 450);
+
 console.log('PASS: wapAggregate');

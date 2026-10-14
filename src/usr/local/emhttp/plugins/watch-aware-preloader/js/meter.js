@@ -9,7 +9,7 @@
 // finds the budget cutline (the engine warms in rank order and stops when the
 // byte budget is exhausted, so everything past the cutline will not warm).
 // sel = { users:Set<string>, libraries:Set<string>,
-//         tiers:{ 'resume':{enabled,max}, 'next-up':{...}, 'recently-added':{...} } }
+//         tiers:{ 'resume':{enabled,max}, 'next-up':{...}, 'recently-added':{...}, 'binge-ahead':{...} } }
 // An empty users/libraries Set means "all" (matches the engine's empty-list rule).
 function wapAggregate(rows, budgetBytes, sel) {
   const allUsers = sel.users.size === 0;
@@ -73,7 +73,7 @@ if (typeof module !== 'undefined' && module.exports) {
 // --- DOM layer (browser only) -------------------------------------------------
 // Reads the embedded estimate island + live form state, repaints #wap-meter on
 // every control change. The control tier keys map to the estimate tier tokens.
-const WAP_TIER_KEYS = { RESUME: 'resume', NEXTUP: 'next-up', RECENT: 'recently-added' };
+const WAP_TIER_KEYS = { RESUME: 'resume', NEXTUP: 'next-up', RECENT: 'recently-added', BINGE: 'binge-ahead' };
 
 // wapSelectionSet reads the current selection for USERS[]/LIBRARIES[]. When the
 // checkbox group is rendered (pickers available), it returns the checked values
@@ -124,7 +124,7 @@ function wapFmtGiB(bytes) { return (bytes / 1073741824).toFixed(1) + ' GiB'; }
 
 // wapTierLabel maps a tier token to its display label (matching the settings
 // page's tier names). Falls back to the raw token for an unknown tier.
-const WAP_TIER_LABELS = { resume: 'Resume', 'next-up': 'Next-up', 'recently-added': 'Recently added' };
+const WAP_TIER_LABELS = { resume: 'Resume', 'next-up': 'Next-up', 'recently-added': 'Recently added', 'binge-ahead': 'Binge look-ahead' };
 function wapTierLabel(t) { return WAP_TIER_LABELS[t] || t; }
 
 function wapPaint(est) {

@@ -50,10 +50,13 @@ $wapRules      = (\is_array($wapMaps['rules'] ?? null)) ? $wapMaps['rules'] : []
 // Signal tiers keyed by the ENGINE's tier token (what lands in a TIER_ORDER csv
 // and what rc.preloadd's tier_csv_filter accepts): token => [cfg-prefix, label].
 // The token is the wire format; the cfg-prefix only names the legacy dial keys.
+// Binge look-ahead is last; its legacy default (off, #139) lives in
+// wap_cfg_legacy_order.
 $wapAllTiers = [
     'resume' => ['RESUME', 'Resume points'],
     'nextup' => ['NEXTUP', 'Next-up episodes'],
     'recent' => ['RECENT', 'Recently added'],
+    'binge'  => ['BINGE', 'Binge look-ahead'],
 ];
 
 // Reuse presave's normalizer so the page and the save path cannot drift on which
@@ -98,12 +101,7 @@ $wapOrderRows = static function (array $order) use ($wapAllTiers): array {
 if (\array_key_exists('TIER_ORDER', $wapCfg)) {
     $wapOrder = $wapOrderList($wapCfg['TIER_ORDER']);
 } else {
-    $wapOrder = [];
-    foreach ($wapAllTiers as $wapTok => [$wapPfx]) {
-        if (\in_array(strtolower((string) ($wapCfg["TIER_{$wapPfx}_ENABLED"] ?? '1')), ['1', 'true', 'yes', 'on'], true)) {
-            $wapOrder[] = $wapTok;
-        }
-    }
+    $wapOrder = wap_cfg_legacy_order($wapCfg);
 }
 $wapTierRows = $wapOrderRows($wapOrder);
 
@@ -514,7 +512,7 @@ if ($wapEstimate !== null) {
     </div>
     </dd>
 </dl>
-<blockquote class="inline_help">The order signals warm in, highest priority first, and a per-user item cap for each (0 = no limit). Use the arrows to set priority; unticking a signal skips it entirely. Each enrolled user follows this order unless they override it in <strong>Users to preload</strong> above.</blockquote>
+<blockquote class="inline_help">The order signals warm in, highest priority first, and a per-user item cap for each (0 = no limit). Use the arrows to set priority; unticking a signal skips it entirely. Each enrolled user follows this order unless they override it in <strong>Users to preload</strong> above. <strong>Binge look-ahead</strong> (off by default) also warms the episode after each next-up episode, crossing into the next season; if the next episode is a special, nothing is warmed for that series; it costs one extra server request per next-up series each run, bounded by the next-up item cap.</blockquote>
 
 <dl>
     <dt><label for="wap_ram_percent">RAM budget (percent)</label></dt>
