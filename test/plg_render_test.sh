@@ -63,4 +63,43 @@ RAW='boom]]>oops <b>and</b> more'
 [ "$(render_check "$RAW" 1)" = "OK" ] \
     || fail "escaped ]]> should render well-formed .plg"
 
-echo "PASS: plg render CDATA safety"
+# --- #171: a signed tag's signature must never reach the CHANGES block. -------
+# Uses the real plugin/tag-changelog.sh against a real SSH-signed annotated tag in
+# a throwaway repo (isolated from the user's git config). Fails loudly if
+# ssh-keygen is unavailable rather than skipping, so the guard cannot go silent.
+command -v ssh-keygen >/dev/null || fail "ssh-keygen required for the signed-tag test"
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "${SCRATCH}"' EXIT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+ssh-keygen -q -t ed25519 -N '' -f "${SCRATCH}/key" >/dev/null
+git init -q "${SCRATCH}/repo"
+(
+    cd "${SCRATCH}/repo"
+    git config user.name t
+    git config user.email t@example.com
+    git config gpg.format ssh
+    git config gpg.ssh.program ssh-keygen
+    git config user.signingkey "${SCRATCH}/key.pub"
+    git commit -q --allow-empty -m init
+    git tag -s -m $'Summary line\n\nBody line one.\nBody line two.' 2026.99.01
+    git tag -s -m 'Only a subject' 2026.99.02
+    git tag -a -m 'Unsigned subject' 2026.99.03
+)
+signed_raw="$(cd "${SCRATCH}/repo" && git tag -l --format='%(contents)' 2026.99.01)"
+case "${signed_raw}" in
+    *"BEGIN SSH SIGNATURE"*) ;;
+    *) fail "test setup: the signed tag carries no signature, so the guard below proves nothing" ;;
+esac
+for t in 2026.99.01 2026.99.02 2026.99.03; do
+    out="$(cd "${SCRATCH}/repo" && "${REPO_ROOT}/plugin/tag-changelog.sh" "${t}")"
+    case "${out}" in
+        *"BEGIN SSH SIGNATURE"* | *"BEGIN PGP SIGNATURE"*) fail "signature leaked into changelog for tag ${t}" ;;
+    esac
+done
+out="$(cd "${SCRATCH}/repo" && "${REPO_ROOT}/plugin/tag-changelog.sh" 2026.99.01)"
+[ "${out}" = $'Summary line\n\nBody line one.\nBody line two.' ] \
+    || fail "signed tag subject+body not preserved: ${out}"
+out="$(cd "${SCRATCH}/repo" && "${REPO_ROOT}/plugin/tag-changelog.sh" 2026.99.02)"
+[ "${out}" = "Only a subject" ] || fail "subject-only tag mangled: ${out}"
+
+echo "PASS: plg render CDATA safety and signature-free changelog"
