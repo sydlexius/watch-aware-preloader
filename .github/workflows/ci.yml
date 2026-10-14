@@ -27,7 +27,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .github/go-version
+          check-latest: true
       - run: CGO_ENABLED=1 go test -race -count=1 ./...
 
   go-lint:
@@ -41,7 +42,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .github/go-version
+          check-latest: true
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: latest
@@ -57,7 +59,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .github/go-version
+          check-latest: true
       # Version kept in lockstep with the Makefile `vulncheck` target.
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
@@ -79,7 +82,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .github/go-version
+          check-latest: true
       - env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -135,6 +139,8 @@ jobs:
         run: bash test/plg_render_test.sh
       - name: Community Applications wrapper test (#4)
         run: bash test/ca_wrapper_test.sh
+      - name: Go toolchain lockstep test (.github/go-version vs go.mod vs workflows)
+        run: bash test/go_version_lockstep_test.sh
       - name: JS unit tests (test/*_test.js)
         run: |
           shopt -s nullglob

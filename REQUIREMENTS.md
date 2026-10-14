@@ -12,8 +12,20 @@ pinned language versions live in [`.tool-versions`](.tool-versions) - run
 
 | Tool | Version | Why | Declared in |
 |------|---------|-----|-------------|
-| Go | 1.27+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions` |
+| Go | 1.27.2+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions`, `.github/go-version` |
 | make | any | task runner | - |
+
+CI and release builds read `.github/go-version` (`1.27.x`) with `check-latest: true`,
+so they pick up each new Go PATCH release without a PR, once it appears in the
+actions/go-versions manifest (if that lookup fails, setup-go falls back to the
+runner's cached 1.27, and govulncheck flags a stale one). Dependabot cannot do
+this: it never bumps the `go`/`toolchain` line on its own
+(dependabot/dependabot-core#13520). The `go` line in `go.mod` is only the
+minimum. A MINOR bump (1.27 -> 1.28) stays a deliberate manual change to
+`.github/go-version`, `go.mod`, and `.tool-versions` together;
+`test/go_version_lockstep_test.sh` fails if they drift apart. (The file lives
+under `.github/`, not at the root as `.go-version`, because goenv and mise read a
+root `.go-version` and cannot use a `1.27.x` wildcard.)
 
 The compiled daemon is a single static binary with **no runtime dependencies**
 on the Unraid host. PHP and the tooling below are only needed for development of
