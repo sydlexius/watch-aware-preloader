@@ -20,6 +20,9 @@ Unraid plugin installs) do not allow letters in the version. Pushing a version
 tag publishes the release; see the Releasing section of the
 [contributing guide](docs/site/src/contributing.md#releasing).
 
+The `2026.08.05` series (`2026.08.05` through `2026.08.05.4`) was tagged on
+2026-08-04 (US Pacific), a day early, before the rule above was adopted.
+
 ## 2026.09.02.1
 
 - A directory under `/mnt` is no longer treated as a cache pool on its name alone; a pool must be a mount root (#120)
@@ -44,7 +47,7 @@ tag publishes the release; see the Releasing section of the
 ## 2026.08.05.2
 
 - A read-ahead truncated by `max_head_mb` now logs the coverage it got versus the coverage requested (#112)
-- First pass at sizing pool-resident files without the spin-up allowance (#117)
+- First pass at sizing pool-resident files without the spin-up allowance (#113)
 
 ## 2026.08.05.1
 
@@ -74,21 +77,21 @@ tag publishes the release; see the Releasing section of the
 ## 2026.07.02
 
 - Plugin name fix so the Unraid version-check spinner resolves (#38)
-- Path maps are auto-derived so a sweep warms the cache (#40)
+- Path maps are auto-derived so a sweep warms the cache (#31)
 
 ## 2026.07.01.1
 
-- Settings and API-key persistence go through the Unraid `/update.php` root path (#35)
+- Settings and API-key persistence go through the Unraid `/update.php` root path (#30)
 
 ## 2026.07.01
 
-- Deterministic settings and API-key persistence (#34)
+- Deterministic settings and API-key persistence (#30)
 - Valid plugin icon and a resolvable update-check URL (#33)
 
 ## 2026.06.30.5 (prerelease)
 
 - Unraid settings page and status panel; no config-file editing needed (#28)
-- Bounded timeout on the FUSE residency probe so a wedged mount cannot stall a sweep (#29)
+- Bounded timeout on the FUSE residency probe so a wedged mount cannot stall a sweep (#17)
 
 ## 2026.06.30.4 (prerelease)
 

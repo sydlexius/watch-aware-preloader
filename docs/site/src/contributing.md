@@ -124,7 +124,8 @@ that was permanently inert while every test passed.
 CI runs the Go build, tests, lint, `govulncheck`, CodeQL, the PHP lint, and the
 plugin packaging smoke tests. Most of those also run locally via
 `scripts/pre-push-gate.sh`, so a PR should not be the first place a failure
-shows up - `govulncheck` and CodeQL are CI-only.
+shows up. `govulncheck` is not part of the pre-push gate: run `make vulncheck`
+yourself (CI runs it too). CodeQL is CI-only.
 
 Bot review runs on every PR. Findings get a fix, a tracked deferral, or a
 written rebuttal - never a silent drop.
@@ -155,6 +156,9 @@ git tag -a 2026.09.02 -m "Short summary of what this release changes"
 git push origin 2026.09.02
 ```
 
+Tag from an up-to-date `main`; nothing in the workflow checks that the tagged
+commit is the current tip of `main`.
+
 The tag message matters: it becomes the changelog shown in the Unraid plugin
 manager, so write it for the people installing the update.
 
@@ -164,8 +168,9 @@ Pushing a tag that starts with a digit runs `.github/workflows/release.yml`,
 which:
 
 1. Builds the static `linux/amd64` `preloadd` binary into the plugin tree
-   (`plugin/build.sh`), stamped with the tag as its version, using the Go
-   version in `.github/go-version`.
+   (`plugin/build.sh`), stamped with the tag as its version, using the latest
+   patch of the Go line named in `.github/go-version` (for example `1.27.x`).
+   The workflow sets `check-latest`, so the exact patch is not pinned.
 2. Packages `src/` as `watch-aware-preloader-<version>-noarch-1.txz` and
    computes its SHA-256 checksum.
 3. Renders `watch-aware-preloader.plg` from `plugin/plugin.j2`, filling in the
@@ -180,8 +185,13 @@ which:
    because releases in this repository are immutable once published, so assets
    cannot be added afterwards.
 
-Every release is published as the latest release, never as a prerelease.
-Installed copies check
+A published release is immutable. If the workflow fails after the tag push,
+delete the leftover draft release and the tag (locally and on the remote)
+before tagging again, rather than trying to repair the release in place.
+
+Every release is published as the latest release, never as a prerelease (the
+four `2026.06.30.x` builds were prereleases under an earlier version of the
+workflow). Installed copies check
 `releases/latest/download/watch-aware-preloader.plg` for updates, and GitHub
 leaves prereleases out of `releases/latest`.
 
