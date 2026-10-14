@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -82,6 +83,46 @@ func TestProjectWarmSetFullUniverse(t *testing.T) {
 	// The resume row's bytes include the front allowance; the next-up row does not.
 	if est.Rows[0].B <= est.Rows[1].B {
 		t.Errorf("resume bytes (%d) should exceed next-up bytes (%d)", est.Rows[0].B, est.Rows[1].B)
+	}
+}
+
+func TestProjectWarmSetIncludesBingeAhead(t *testing.T) {
+	// Binge-ahead is off by default but still projected, so ticking it on the
+	// page moves the meter instead of reading as zero bytes.
+	p := &stubProvider{
+		users:  []core.User{{ID: "3", Name: "jesse"}},
+		nextUp: map[string][]core.MediaItem{"3": {{ID: "n", SeriesID: "S", ServerPath: "/mnt/user/TV/n.mkv", BitrateBps: 8_000_000}}},
+		after:  map[string]core.MediaItem{"n": {ID: "n2", SeriesID: "S", ServerPath: "/mnt/user/TV/n2.mkv", BitrateBps: 8_000_000}},
+	}
+	est, err := ProjectWarmSet(context.Background(), p, estCfg(), 16<<30, 50, "2026-07-10T00:00:00Z", pathmap.New(nil).ToHost, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(est.Rows) != 2 || est.Rows[0].T != "next-up" || est.Rows[1].T != "binge-ahead" || est.Rows[1].B <= 0 {
+		t.Fatalf("rows = %+v, want next-up then a sized binge-ahead row", est.Rows)
+	}
+}
+
+func TestProjectWarmSetBoundsBingeLookups(t *testing.T) {
+	// Binge-ahead is projected even when off, so its per-request cost needs its
+	// own small per-user ceiling rather than the 200-item one. No series has a
+	// successor here (every next-up is a finale), so the row cap never fills and
+	// only the lookup ceiling can stop the requests.
+	nextUp := make([]core.MediaItem, 0, 40)
+	for i := range 40 {
+		id := fmt.Sprintf("n%d", i)
+		nextUp = append(nextUp, core.MediaItem{ID: id, SeriesID: "S" + id, ServerPath: "/mnt/user/TV/" + id + ".mkv"})
+	}
+	p := &stubProvider{users: []core.User{{ID: "3", Name: "jesse"}}, nextUp: map[string][]core.MediaItem{"3": nextUp}}
+	est, err := ProjectWarmSet(context.Background(), p, estCfg(), 16<<30, 50, "2026-07-10T00:00:00Z", pathmap.New(nil).ToHost, discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.episodeCalls) != estimateBingeLookupsPerUser {
+		t.Fatalf("EpisodeAfter calls = %d, want the %d-lookup ceiling", len(p.episodeCalls), estimateBingeLookupsPerUser)
+	}
+	if !est.Meta.CeilingTruncated {
+		t.Error("a binge projection cut short by its ceiling must flag truncation")
 	}
 }
 

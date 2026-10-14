@@ -105,6 +105,19 @@ func TestPerUserRoutes(t *testing.T) {
 			wantQuery: map[string]string{"userId": "u1", "Fields": "Path,MediaSources"},
 		},
 		{
+			name: "episodes",
+			body: `{"Items":[]}`,
+			call: func(c *Client) error {
+				_, _, err := c.EpisodeAfter(context.Background(), "u1", "ser1", "e3")
+				return err
+			},
+			wantPath: "/Shows/ser1/Episodes",
+			wantQuery: map[string]string{
+				"userId": "u1", "Fields": "Path,MediaSources",
+				"StartItemId": "e3", "Limit": "2",
+			},
+		},
+		{
 			name: "latest",
 			body: `[]`,
 			call: func(c *Client) error {
@@ -182,6 +195,18 @@ func TestResumeDecodesJellyfinItem(t *testing.T) {
 	}
 	if it.Runtime != 44*time.Minute || it.ResumeOffset != 10*time.Minute {
 		t.Errorf("runtime/resume = %v/%v, want 44m/10m", it.Runtime, it.ResumeOffset)
+	}
+}
+
+func TestEpisodeAfterSendsMediaBrowserAuthAndDecodes(t *testing.T) {
+	c, ch := serve(t, `{"Items":[{"Id":"e3","SeriesId":"ser1","ParentIndexNumber":1},`+
+		`{"Id":"e4","SeriesId":"ser1","ParentIndexNumber":2,"MediaSources":[{"Path":"/media/tv/e4.mkv","Size":9}]}]}`)
+	it, ok, err := c.EpisodeAfter(context.Background(), "u1", "ser1", "e3")
+	if err != nil || !ok || it.ID != "e4" || it.SeriesID != "ser1" || it.ServerPath != "/media/tv/e4.mkv" {
+		t.Fatalf("got (%+v, %v, %v), want e4 decoded", it, ok, err)
+	}
+	if got := <-ch; got.auth != `MediaBrowser Token="abc123"` {
+		t.Errorf("Authorization = %q, want the MediaBrowser token", got.auth)
 	}
 }
 

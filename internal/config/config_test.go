@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,25 @@ func TestTierDefaultsNoDialsIsFullOrderNoCap(t *testing.T) {
 	}
 	if c.Tiers.RecentlyAdded.MaxItems != 0 {
 		t.Errorf("default MaxItems should be 0 (no cap), got %d", c.Tiers.RecentlyAdded.MaxItems)
+	}
+}
+
+func TestBingeAheadOffByDefault(t *testing.T) {
+	// A config that never mentions binge-ahead (every pre-#139 config) must not
+	// gain it: the dial decodes disabled and the resolved order omits the tier.
+	c := writeAndLoad(t, "[tiers.resume]\nmax_items = 5\n")
+	if c.Tiers.BingeAhead.Enabled {
+		t.Error("BingeAhead dial enabled by default")
+	}
+	if slices.Contains(c.Tiers.Order, core.TierBingeAhead) {
+		t.Errorf("order %v contains binge-ahead without an opt-in", c.Tiers.Order)
+	}
+	if got := AllTiers(); got[len(got)-1] != core.TierBingeAhead {
+		t.Errorf("AllTiers() = %v, want binge-ahead ranked last", got)
+	}
+	c = writeAndLoad(t, "[tiers.binge_ahead]\nmax_items = 7\n")
+	if got := c.Tiers.Dial(core.TierBingeAhead).MaxItems; got != 7 {
+		t.Errorf("Dial(binge-ahead).MaxItems = %d, want 7", got)
 	}
 }
 
@@ -478,6 +498,25 @@ func TestTierOrderResolution(t *testing.T) {
 		{"explicit empty order is legal", "[tiers]\norder = []\n", TierOrder{}},
 		{"explicit order is verbatim", "[tiers]\norder = [\"nextup\", \"resume\"]\n",
 			TierOrder{core.TierNextUp, core.TierResume}},
+		// Binge-ahead is off by default (#139): it joins only when named.
+		{"binge max_items alone stays off", "[tiers.binge_ahead]\nmax_items = 3\n", full},
+		{"binge false alone is a deny-list of nothing new", "[tiers.binge_ahead]\nenabled = false\n", full},
+		// Binge's flag never narrows the original tiers; it only appends itself.
+		{"legacy binge true alone keeps the originals", "[tiers.binge_ahead]\nenabled = true\n",
+			append(full, core.TierBingeAhead)},
+		{"legacy binge true with a deny-listed original",
+			"[tiers.recently_added]\nenabled = false\n[tiers.binge_ahead]\nenabled = true\n",
+			TierOrder{core.TierResume, core.TierNextUp, core.TierBingeAhead}},
+		{"legacy three originals true and binge unset stays off",
+			"[tiers.resume]\nenabled = true\n[tiers.next_up]\nenabled = true\n[tiers.recently_added]\nenabled = true\n",
+			full},
+		{"legacy all four true puts binge last",
+			"[tiers.resume]\nenabled = true\n[tiers.next_up]\nenabled = true\n[tiers.recently_added]\nenabled = true\n[tiers.binge_ahead]\nenabled = true\n",
+			append(full, core.TierBingeAhead)},
+		{"explicit order names binge in either spelling", "[tiers]\norder = [\"binge_ahead\", \"resume\"]\n",
+			TierOrder{core.TierBingeAhead, core.TierResume}},
+		{"flat cfg spelling", "[tiers]\norder = [\"resume\", \"binge\"]\n",
+			TierOrder{core.TierResume, core.TierBingeAhead}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := writeAndLoad(t, tc.body)

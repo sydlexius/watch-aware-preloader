@@ -4,6 +4,8 @@
       "Id": "next1",
       "Name": "Example Series S02E03",
       "RunTimeTicks": 18000000000,
+      "SeriesId": "series1",
+      "ParentIndexNumber": 2,
       "MediaSources": [
         { "Path": "/share/TV_Shows/Example Series/s02e03.mkv", "Bitrate": 12000000, "Size": 4200000000 }
       ]

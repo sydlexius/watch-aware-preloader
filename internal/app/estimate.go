@@ -63,6 +63,30 @@ func projectBytes(cfg preloader.Config, it core.MediaItem, tier core.Tier) int64
 // slider both stay bounded. Meta.CeilingTruncated flags when it bit.
 const estimateCeilingPerUserTier = 200
 
+// estimateBingeLookupsPerUser bounds the binge-ahead projection separately and
+// much lower: each binge row costs one /Shows/{id}/Episodes request, and the
+// estimate projects binge for every user even when the tier is off, so the
+// 200-item ceiling would mean up to 200 extra requests per user per Estimate.
+const estimateBingeLookupsPerUser = 25
+
+// bingeLookupLimiter wraps a Provider so EpisodeAfter answers "nothing to warm"
+// once a user has spent estimateBingeLookupsPerUser lookups, without a request.
+// It is used only by the estimate, so a real sweep's binge tier is unaffected.
+type bingeLookupLimiter struct {
+	Provider
+	used    map[string]int
+	limited bool // a lookup was refused, so the projection is truncated
+}
+
+func (b *bingeLookupLimiter) EpisodeAfter(ctx context.Context, userID, seriesID, itemID string) (core.MediaItem, bool, error) {
+	if b.used[userID] >= estimateBingeLookupsPerUser {
+		b.limited = true
+		return core.MediaItem{}, false, nil
+	}
+	b.used[userID]++
+	return b.Provider.EpisodeAfter(ctx, userID, seriesID, itemID)
+}
+
 // newLibraryAttributor returns a function mapping an item's server path to the ID
 // of the first library it falls under, or "" if none. It reuses libscope per
 // library so attribution matches the same host-path prefix logic library scoping
@@ -99,11 +123,18 @@ func newLibraryAttributor(libs []core.Library, toHost libscope.ToHost) func(serv
 // RFC3339 UTC timestamp supplied by the caller (kept out of here so the function
 // is deterministic and testable).
 func ProjectWarmSet(ctx context.Context, p Provider, cfg preloader.Config, budgetBytes int64, ramPercent int, generatedAt string, toHost libscope.ToHost, log *slog.Logger) (estimate.Estimate, error) {
+	// Binge-ahead is projected too, although it is off by default: the meter
+	// filters rows by the page's CURRENT tier toggles, so a tier missing from
+	// the projection would read as zero bytes the moment an operator ticks it,
+	// and the meter must err high, never low. The cost is one extra read-only
+	// request per next-up item, at most estimateBingeLookupsPerUser per user,
+	// paid only when the operator runs Estimate.
 	full := config.TiersConfig{
 		Resume:        config.TierDial{Enabled: true, MaxItems: estimateCeilingPerUserTier},
 		NextUp:        config.TierDial{Enabled: true, MaxItems: estimateCeilingPerUserTier},
 		RecentlyAdded: config.TierDial{Enabled: true, MaxItems: estimateCeilingPerUserTier},
-		Order:         config.DefaultTierOrder(),
+		BingeAhead:    config.TierDial{Enabled: true, MaxItems: estimateBingeLookupsPerUser},
+		Order:         config.AllTiers(),
 	}
 	users, err := p.Users(ctx)
 	if err != nil {
@@ -116,7 +147,8 @@ func ProjectWarmSet(ctx context.Context, p Provider, cfg preloader.Config, budge
 	fullCfg := &config.Config{Tiers: full}
 	ranks := ResolveRanks(fullCfg, users, log)
 
-	cands, playing, err := CollectCandidates(ctx, p, users, nil, full, ranks, toHost, log)
+	limiter := &bingeLookupLimiter{Provider: p, used: map[string]int{}}
+	cands, playing, err := CollectCandidates(ctx, limiter, users, nil, full, ranks, toHost, log)
 	if err != nil {
 		return estimate.Estimate{}, err
 	}
@@ -152,9 +184,13 @@ func ProjectWarmSet(ctx context.Context, p Provider, cfg preloader.Config, budge
 	for _, c := range cands {
 		bucket[[2]string{c.Item.UserID, c.Tier.String()}]++
 	}
-	truncated := false
-	for _, n := range bucket {
-		if n >= estimateCeilingPerUserTier {
+	truncated := limiter.limited
+	for k, n := range bucket {
+		ceiling := estimateCeilingPerUserTier
+		if k[1] == core.TierBingeAhead.String() {
+			ceiling = estimateBingeLookupsPerUser
+		}
+		if n >= ceiling {
 			truncated = true
 			break
 		}

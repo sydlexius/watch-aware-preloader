@@ -32,6 +32,11 @@ type Item struct {
 		PlaybackPositionTicks int64 `json:"PlaybackPositionTicks"`
 	} `json:"UserData"`
 	MediaSources []mediaSource `json:"MediaSources"`
+	// SeriesID is the owning series of an episode; empty for anything else.
+	SeriesID string `json:"SeriesId"`
+	// ParentIndexNumber is an episode's season number. A pointer because an
+	// absent number (unknown season) must not read as season 0 (specials).
+	ParentIndexNumber *int `json:"ParentIndexNumber"`
 }
 
 // ToCore converts the item to the provider-neutral type, attributing it to
@@ -43,6 +48,7 @@ func (it Item) ToCore(userID string) core.MediaItem {
 		Runtime:      TicksToDuration(it.RunTimeTicks),
 		ResumeOffset: TicksToDuration(it.UserData.PlaybackPositionTicks),
 		UserID:       userID,
+		SeriesID:     it.SeriesID,
 	}
 	if len(it.MediaSources) > 0 {
 		mi.ServerPath = it.MediaSources[0].Path

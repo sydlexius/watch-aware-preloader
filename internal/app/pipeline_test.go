@@ -53,6 +53,12 @@ type stubProvider struct {
 	resumeCalls []string
 	nextUpCalls []string
 	latestCalls []string
+
+	// after maps a next-up item ID to the episode after it; afterErr maps a
+	// series ID to an error. episodeCalls records "user/series/item" per call.
+	after        map[string]core.MediaItem
+	afterErr     map[string]error
+	episodeCalls []string
 }
 
 func (s *stubProvider) Users(context.Context) ([]core.User, error) { return s.users, nil }
@@ -70,6 +76,14 @@ func (s *stubProvider) NextUp(_ context.Context, id string) ([]core.MediaItem, e
 func (s *stubProvider) RecentlyAdded(_ context.Context, id string) ([]core.MediaItem, error) {
 	s.latestCalls = append(s.latestCalls, id)
 	return s.latest[id], nil
+}
+func (s *stubProvider) EpisodeAfter(_ context.Context, userID, seriesID, itemID string) (core.MediaItem, bool, error) {
+	s.episodeCalls = append(s.episodeCalls, userID+"/"+seriesID+"/"+itemID)
+	if err := s.afterErr[seriesID]; err != nil {
+		return core.MediaItem{}, false, err
+	}
+	it, ok := s.after[itemID]
+	return it, ok, nil
 }
 func (s *stubProvider) NowPlayingIDs(context.Context) (map[string]bool, error) {
 	return s.playing, nil
@@ -307,6 +321,9 @@ func (vendorNeutralProvider) NextUp(context.Context, string) ([]core.MediaItem, 
 }
 func (vendorNeutralProvider) RecentlyAdded(context.Context, string) ([]core.MediaItem, error) {
 	return nil, nil
+}
+func (vendorNeutralProvider) EpisodeAfter(context.Context, string, string, string) (core.MediaItem, bool, error) {
+	return core.MediaItem{}, false, nil
 }
 func (vendorNeutralProvider) NowPlayingIDs(context.Context) (map[string]bool, error) {
 	return nil, nil

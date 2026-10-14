@@ -54,10 +54,11 @@ var tierNames = map[string]core.Tier{
 	"resume":         core.TierResume,
 	"next_up":        core.TierNextUp,
 	"recently_added": core.TierRecentlyAdded,
+	"binge_ahead":    core.TierBingeAhead,
 }
 
 // ParseTierName resolves a tier's config spelling. It also accepts the flat
-// .cfg spellings ("nextup", "recent") that rc.preloadd emits, so a
+// .cfg spellings ("nextup", "recent", "binge") that rc.preloadd emits, so a
 // hand-edited config using either form loads.
 func ParseTierName(s string) (core.Tier, bool) {
 	switch s {
@@ -65,15 +66,28 @@ func ParseTierName(s string) (core.Tier, bool) {
 		return core.TierNextUp, true
 	case "recent":
 		return core.TierRecentlyAdded, true
+	case "binge":
+		return core.TierBingeAhead, true
 	}
 	t, ok := tierNames[s]
 	return t, ok
 }
 
 // DefaultTierOrder is the order used when no [tiers] order is configured. It
-// matches the pre-order hardcoded behavior.
+// matches the pre-order hardcoded behavior, and so deliberately OMITS
+// binge-ahead: that tier is off by default (#139), so an upgrade leaves every
+// household's preload set unchanged until an operator opts in.
 func DefaultTierOrder() TierOrder {
 	return TierOrder{core.TierResume, core.TierNextUp, core.TierRecentlyAdded}
+}
+
+// AllTiers is every implemented tier in its default priority position:
+// DefaultTierOrder with binge-ahead appended LAST, since a not-yet-started
+// episode after next-up is worth less than anything the default tiers surface.
+// It is the iteration order for fetches and the position an opted-in
+// binge-ahead takes when nothing else places it.
+func AllTiers() TierOrder {
+	return append(DefaultTierOrder(), core.TierBingeAhead)
 }
 
 // UnmarshalTOML decodes a list of tier names into a TierOrder. Decoding rejects
@@ -92,7 +106,7 @@ func (o *TierOrder) UnmarshalTOML(v any) error {
 		}
 		t, ok := ParseTierName(s)
 		if !ok {
-			return fmt.Errorf("unknown tier %q in order (want resume, next_up, or recently_added)", s)
+			return fmt.Errorf("unknown tier %q in order (want resume, next_up, recently_added, or binge_ahead)", s)
 		}
 		out = append(out, t)
 	}
@@ -110,6 +124,10 @@ type TiersConfig struct {
 	Resume        TierDial `toml:"resume"`
 	NextUp        TierDial `toml:"next_up"`
 	RecentlyAdded TierDial `toml:"recently_added"`
+	// BingeAhead is off by default: it is absent from DefaultTierOrder, so it
+	// is enabled only by naming it in an order (or, legacy, enabled = true,
+	// which appends it after the original tiers without narrowing them).
+	BingeAhead TierDial `toml:"binge_ahead"`
 
 	// Order is the household-wide priority order.
 	Order TierOrder `toml:"order"`
@@ -120,7 +138,7 @@ type TiersConfig struct {
 }
 
 // Dial returns the max-items dial for a tier. Unknown tiers get the zero dial
-// (no cap), which is the correct default for the reserved Phase 3 tiers.
+// (no cap).
 func (t TiersConfig) Dial(tier core.Tier) TierDial {
 	switch tier {
 	case core.TierResume:
@@ -129,6 +147,8 @@ func (t TiersConfig) Dial(tier core.Tier) TierDial {
 		return t.NextUp
 	case core.TierRecentlyAdded:
 		return t.RecentlyAdded
+	case core.TierBingeAhead:
+		return t.BingeAhead
 	default:
 		return TierDial{}
 	}
@@ -298,26 +318,32 @@ func (c *Config) applyDefaults(orderDefined bool, legacyEnabled map[core.Tier]bo
 //     the intended behavior change, not a preserved one.
 //   - No flag at all: the full default order.
 //
+// Binge-ahead (#139) stays OUT of that decision. The three original tiers
+// resolve exactly as they did before it existed, and binge-ahead is then
+// APPENDED if and only if its flag is stated true. Letting its `enabled = true`
+// flip the reading into allow-list mode would make `[tiers.binge_ahead]
+// enabled = true` alone silently drop resume, next-up and recently-added.
+//
 // A config stating every flag (what rc.preloadd always renders) resolves the
 // same under either reading, so the plugin-rendered shape is unaffected and the
 // departure above is reachable only from a hand-edited config.toml.
 func deriveLegacyOrder(legacyEnabled map[core.Tier]bool) TierOrder {
-	if len(legacyEnabled) == 0 {
-		return DefaultTierOrder()
-	}
-	allowList := false
-	for _, enabled := range legacyEnabled {
-		if enabled {
-			allowList = true
-			break
+	order := TierOrder{}
+	allowList, anyOriginal := false, false
+	for _, t := range DefaultTierOrder() {
+		if enabled, stated := legacyEnabled[t]; stated {
+			anyOriginal = true
+			allowList = allowList || enabled
 		}
 	}
-	order := TierOrder{}
 	for _, t := range DefaultTierOrder() {
 		enabled, stated := legacyEnabled[t]
-		if (allowList && stated && enabled) || (!allowList && !stated) {
+		if !anyOriginal || (allowList && stated && enabled) || (!allowList && !stated) {
 			order = append(order, t)
 		}
+	}
+	if legacyEnabled[core.TierBingeAhead] {
+		order = append(order, core.TierBingeAhead)
 	}
 	return order
 }
