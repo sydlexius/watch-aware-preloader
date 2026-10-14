@@ -19,9 +19,20 @@ Each sweep asks the server for:
 | **Resume points** | Titles someone stopped partway through |
 | **Next up** | The next unwatched episode of a series in progress |
 | **Recently added** | New arrivals in the libraries you selected |
+| **Binge look-ahead** (off by default) | The episode after each next-up episode |
 
 Items in an **active playback session** are excluded. That disk is already
 spinning, so warming it buys nothing.
+
+Binge look-ahead has no single API call behind it. For each next-up episode the
+plugin asks the server for that series' episode list starting at the next-up
+episode, two items long, and takes the one after it. That is one extra request
+per next-up series on every run, which is why the tier is opt-in and why the
+Next up item cap bounds it. The look-ahead crosses a season boundary into the
+next season's premiere. If the next episode is a special (season 0), nothing
+is warmed for that series. It also warms nothing when the next-up episode is
+the last one, when the next episode has no media file yet, or when the
+server's answer does not contain the next-up episode at all (it never guesses).
 
 ## Duration-based sizing
 

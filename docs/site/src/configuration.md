@@ -59,10 +59,41 @@ signal tiers. By default the plugin works through them in this order:
 | **Resume** | Titles someone stopped partway through. Warmed at the resume byte offset, plus the file tail so the player can read the container's cue index to seek. |
 | **Next up** | The next unwatched episode of a series someone is working through. |
 | **Recently added** | New arrivals in the libraries you selected. |
+| **Binge look-ahead** | The episode *after* each next-up episode, so a viewer starting another episode straight away does not wait on a spin-up. **Off by default.** |
 
-Each tier has a dial in the settings page, so you can cap how many items it
-contributes or turn it off entirely. An item that is already playing is excluded:
-that disk is demonstrably awake already.
+Each of the first three tiers has a dial in the settings page, so you can cap
+how many items it contributes or turn it off entirely. An item that is already
+playing is excluded: that disk is demonstrably awake already.
+
+### Binge look-ahead
+
+Binge look-ahead is off unless `config.toml` enables it, so upgrading the
+plugin does not change what any household preloads. Listed last in
+`[tiers] order` it ranks below the other three tiers; you can list it anywhere
+in the order like any other tier.
+
+- **One episode ahead.** For each next-up episode it warms exactly one more
+  episode of the same series. The depth is fixed.
+- **Season boundaries.** After a season finale, the next episode is the next
+  season's premiere. If the next episode is a special (season 0), nothing is
+  warmed for that series.
+- **Server cost.** It makes one extra request to the media server per next-up
+  series, per user, on every run. The **Next up** max-items cap also bounds how
+  many next-up episodes are looked ahead from, even when the Next up tier itself
+  is off, so lower that cap if the extra requests are a concern. The tier
+  reuses the next-up list it already fetched rather than asking for it twice.
+- **Estimate.** Clicking **Estimate budget** projects binge look-ahead too,
+  even while the tier is off. That issues the same per-series requests, capped
+  at 25 per user per estimate.
+- **Failures.** If the server cannot answer for one series, that series is
+  skipped and logged; the rest of the run continues.
+
+The tier is configured in `config.toml` only: enable it by naming
+`binge_ahead` in `[tiers] order` (for example `order = ["resume", "next_up",
+"recently_added", "binge_ahead"]`) and cap it with
+`[tiers.binge_ahead] max_items`. A config that does not mention it leaves it
+off. The settings page has no control for it, so on a plugin install the next
+save or reboot regenerates `config.toml` without it (see the warning above).
 
 ## Budget and sizing
 

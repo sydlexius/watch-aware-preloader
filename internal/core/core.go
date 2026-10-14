@@ -16,7 +16,7 @@ const (
 	TierResume        Tier = iota // recent incompletes, not currently playing
 	TierNextUp                    // next episode of an active series
 	TierRecentlyAdded             // recently added, unwatched
-	TierBingeAhead                // episode after next-up (reserved; Phase 3)
+	TierBingeAhead                // episode after next-up (off by default, #139)
 	TierBestEffort                // filesystem-recency fill
 )
 
@@ -48,6 +48,7 @@ type MediaItem struct {
 	Runtime      time.Duration // total playback duration
 	ResumeOffset time.Duration // playback position for resume items; 0 otherwise
 	UserID       string        // the user account that surfaced this item
+	SeriesID     string        // owning series of an episode; empty otherwise
 }
 
 // User is a media-server user account.

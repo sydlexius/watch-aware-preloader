@@ -195,6 +195,41 @@ func TestNextUpMapsFields(t *testing.T) {
 	if it.UserID != "u1" {
 		t.Errorf("user id = %q, want u1", it.UserID)
 	}
+	// The binge look-ahead tier keys its follow-up request off this.
+	if it.SeriesID != "series1" {
+		t.Errorf("series id = %q, want series1", it.SeriesID)
+	}
+}
+
+func TestEpisodeAfterRoute(t *testing.T) {
+	// The binge look-ahead request: Emby's /Shows/{Id}/Episodes, user-scoped by a
+	// UserId query param and authenticated with X-Emby-Token like every call.
+	type req struct {
+		path, token string
+		q           url.Values
+	}
+	reqCh := make(chan req, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCh <- req{path: r.URL.Path, token: r.Header.Get("X-Emby-Token"), q: r.URL.Query()}
+		_, _ = w.Write([]byte(`{"Items":[{"Id":"e3","ParentIndexNumber":1},` +
+			`{"Id":"e4","SeriesId":"ser1","ParentIndexNumber":1,"MediaSources":[{"Path":"/share/TV/e4.mkv"}]}]}`))
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "k", srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, ok, err := c.EpisodeAfter(context.Background(), "u1", "ser1", "e3")
+	if err != nil || !ok || it.ID != "e4" || it.ServerPath != "/share/TV/e4.mkv" {
+		t.Fatalf("got (%+v, %v, %v), want e4", it, ok, err)
+	}
+	got := <-reqCh
+	if got.path != "/Shows/ser1/Episodes" || got.token != "k" {
+		t.Errorf("path/token = %q/%q, want /Shows/ser1/Episodes and k", got.path, got.token)
+	}
+	if got.q.Get("UserId") != "u1" || got.q.Get("StartItemId") != "e3" || got.q.Get("Limit") != "2" {
+		t.Errorf("query = %v, want UserId=u1 StartItemId=e3 Limit=2", got.q)
+	}
 }
 
 func TestNextUpQueryParams(t *testing.T) {

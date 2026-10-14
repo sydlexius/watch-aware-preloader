@@ -28,6 +28,10 @@ type Provider interface {
 	Resume(ctx context.Context, userID string) ([]core.MediaItem, error)
 	NextUp(ctx context.Context, userID string) ([]core.MediaItem, error)
 	RecentlyAdded(ctx context.Context, userID string) ([]core.MediaItem, error)
+	// EpisodeAfter returns the episode following itemID in series seriesID, for
+	// the binge-ahead tier. ok is false when there is nothing to warm (last
+	// episode, a special, or an answer that does not contain itemID).
+	EpisodeAfter(ctx context.Context, userID, seriesID, itemID string) (item core.MediaItem, ok bool, err error)
 	NowPlayingIDs(ctx context.Context) (map[string]bool, error)
 }
 
@@ -77,30 +81,25 @@ func CollectCandidates(ctx context.Context, p Provider, users []core.User, enabl
 		return nil, nil, err
 	}
 
-	fetch := map[core.Tier]func(context.Context, string) ([]core.MediaItem, error){
-		core.TierResume:        p.Resume,
-		core.TierNextUp:        p.NextUp,
-		core.TierRecentlyAdded: p.RecentlyAdded,
-	}
-
 	var cands []scorer.Candidate
 	for _, u := range users {
 		order, enrolled := opts.TierRank[u.ID]
 		if !enrolled {
 			continue
 		}
-		// Iterate the default order, not the user's map, so fetches are
-		// deterministic. The map's positions drive priority; iteration order does
-		// not.
-		for _, tier := range config.DefaultTierOrder() {
+		fetch := userFetchers(ctx, p, u.ID, tiers, log)
+		// Iterate every implemented tier in its default position, not the user's
+		// map, so fetches are deterministic. The map's positions drive priority;
+		// iteration order does not.
+		for _, tier := range config.AllTiers() {
 			if _, on := order[tier]; !on {
 				continue
 			}
 			get, ok := fetch[tier]
 			if !ok {
-				continue // reserved tier with no provider endpoint yet
+				continue // tier with no provider endpoint
 			}
-			items, err := get(ctx, u.ID)
+			items, err := get()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -123,6 +122,84 @@ func CollectCandidates(ctx context.Context, p Provider, users []core.User, enabl
 		cands = filterByLibraries(cands, libs, enabledLibraries, toHost, log)
 	}
 	return cands, playing, nil
+}
+
+// userFetchers returns one user's fetch for each implemented tier. The next-up
+// list is fetched at most once per user per sweep and only on first use: the
+// NextUp tier emits it and the binge-ahead tier reads it as input, so enabling
+// both costs one /Shows/NextUp request, and enabling neither costs none.
+func userFetchers(ctx context.Context, p Provider, userID string, tiers config.TiersConfig, log *slog.Logger) map[core.Tier]func() ([]core.MediaItem, error) {
+	var nextUp []core.MediaItem
+	fetched := false
+	getNextUp := func() ([]core.MediaItem, error) {
+		if fetched {
+			return nextUp, nil
+		}
+		items, err := p.NextUp(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		// Filtered here too, so binge-ahead's NextUp-capped input is the same
+		// warmable list the NextUp tier emits.
+		nextUp, fetched = withMediaFile(items), true
+		return nextUp, nil
+	}
+	return map[core.Tier]func() ([]core.MediaItem, error){
+		core.TierResume:        func() ([]core.MediaItem, error) { return p.Resume(ctx, userID) },
+		core.TierNextUp:        getNextUp,
+		core.TierRecentlyAdded: func() ([]core.MediaItem, error) { return p.RecentlyAdded(ctx, userID) },
+		core.TierBingeAhead: func() ([]core.MediaItem, error) {
+			return bingeAhead(ctx, p, userID, getNextUp, tiers, log)
+		},
+	}
+}
+
+// bingeAhead collects the binge-ahead tier for one user: for each next-up
+// episode, the episode after it in the same series (#139).
+//
+// Its input is the user's next-up list, shared with the NextUp tier through
+// getNextUp so /Shows/NextUp is never fetched twice in a sweep. That input is
+// capped by the NextUp tier's MaxItems even when the NextUp tier itself is off:
+// each input item costs one extra request, so the operator's NextUp cap is
+// what bounds this tier's load on the server. Collection also stops once the
+// binge-ahead cap is filled, so a small binge cap saves requests too.
+//
+// Error contract: a failure to fetch the next-up list aborts the sweep, exactly
+// as it does for the NextUp tier. A failure of ONE series' follow-up request is
+// logged and that series skipped instead. The tier is opt-in and makes one
+// request per series, so a single series the server cannot answer for (a
+// deleted show, a metadata error) would otherwise abort every sweep for every
+// user, taking resume, next-up and recently-added down with it. A canceled
+// context still aborts, so shutdown and timeouts behave as for other tiers.
+func bingeAhead(ctx context.Context, p Provider, userID string, getNextUp func() ([]core.MediaItem, error), tiers config.TiersConfig, log *slog.Logger) ([]core.MediaItem, error) {
+	nextUp, err := getNextUp()
+	if err != nil {
+		return nil, err
+	}
+	limit := tiers.BingeAhead.MaxItems
+	var out []core.MediaItem
+	for _, nu := range capItems(nextUp, tiers.NextUp.MaxItems) {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		if nu.SeriesID == "" {
+			continue // not an episode, or the server did not say which series
+		}
+		it, ok, err := p.EpisodeAfter(ctx, userID, nu.SeriesID, nu.ID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if log != nil {
+				log.Warn("binge-ahead: skipping series", "series", nu.SeriesID, "err", err)
+			}
+			continue
+		}
+		if ok {
+			out = append(out, it)
+		}
+	}
+	return out, nil
 }
 
 // filterByLibraries keeps only candidates whose item falls under one of the

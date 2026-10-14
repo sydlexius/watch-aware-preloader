@@ -49,6 +49,12 @@ func (c *Client) NextUp(ctx context.Context, userID string) ([]core.MediaItem, e
 	return c.api.Items(ctx, "/Shows/NextUp", q, userID)
 }
 
+// EpisodeAfter returns the episode after itemID in series seriesID, for the
+// binge look-ahead tier. ok is false when there is nothing to warm.
+func (c *Client) EpisodeAfter(ctx context.Context, userID, seriesID, itemID string) (core.MediaItem, bool, error) {
+	return c.api.EpisodeAfter(ctx, "UserId", userID, seriesID, itemID)
+}
+
 // RecentlyAdded returns recently added items for the user.
 func (c *Client) RecentlyAdded(ctx context.Context, userID string) ([]core.MediaItem, error) {
 	// /Items/Latest returns a bare array, not an {Items:[]} envelope.
