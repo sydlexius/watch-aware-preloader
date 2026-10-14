@@ -195,7 +195,10 @@ func bingeAhead(ctx context.Context, p Provider, userID string, getNextUp func()
 			}
 			continue
 		}
-		if ok {
+		// Count only a warmable successor toward the cap: one with no media
+		// file is dropped later by withMediaFile, and would otherwise fill a
+		// slot that a later series could have used.
+		if ok && it.ServerPath != "" {
 			out = append(out, it)
 		}
 	}

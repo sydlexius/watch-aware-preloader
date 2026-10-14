@@ -166,3 +166,22 @@ func TestBingeAheadDropsASuccessorWithNoMediaFile(t *testing.T) {
 		t.Fatalf("binge-ahead candidates = %v, want [b8]", got[core.TierBingeAhead])
 	}
 }
+
+func TestBingeAheadUnwarmableSuccessorDoesNotFillTheCap(t *testing.T) {
+	// A successor with no media file must not take the only binge slot, or the
+	// later guard drops it and the tier ends up empty although series B has a
+	// warmable successor.
+	p := bingeStub()
+	p.after["a3"] = core.MediaItem{ID: "a4", SeriesID: "A"}
+	tiers := config.TiersConfig{
+		BingeAhead: config.TierDial{MaxItems: 1},
+		Order:      config.TierOrder{core.TierBingeAhead},
+	}
+	got, err := collect(context.Background(), t, p, tiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got[core.TierBingeAhead], []string{"b8"}) {
+		t.Fatalf("binge cap 1: candidates = %v, want [b8]", got[core.TierBingeAhead])
+	}
+}
