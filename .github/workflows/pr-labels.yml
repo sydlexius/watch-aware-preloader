@@ -1,0 +1,129 @@
+# Copy labels from the issues a pull request references onto the pull request.
+#
+# The PR body is scanned for "Closes #N", "Fixes #N", "Resolves #N", "Refs #N"
+# and "Part of #N" (any tense, any case). Each referenced issue's labels are
+# copied to the PR when the label exists in the repository's label set
+# (Settings > Labels), so adding or renaming a label needs no workflow change.
+#
+# Labels in an exclusive family (one value per PR: "priority: ...", "scope: ...")
+# are reduced to a single value: the first one listed in EXCLUSIVE below, so a
+# PR that closes a critical issue and a low-priority one is labeled critical.
+# A family the PR already carries is left to the PR: a value set by hand is
+# never replaced by one inherited from an issue.
+#
+# This labels only. It is not a required check and never blocks a merge.
+#
+# Trigger: pull_request_target runs this file as it is on the BASE branch, so a
+# PR cannot change what the labeling job does, and it is the only trigger that
+# grants a fork PR the pull-requests: write scope needed to add labels. That is
+# safe here because the job checks out no code and runs nothing from the PR.
+# The PR body is untrusted input: it is read as data inside the script, only
+# matched by a regex whose captured digits are parsed to integers, and never
+# reaches a shell, an expression interpolation, or an API path as text.
+# Dependabot PRs reference no issues and are skipped.
+
+name: PR labels
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+
+permissions: {}
+
+jobs:
+  label:
+    name: Label from referenced issues
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      issues: read
+      pull-requests: write
+    concurrency:
+      group: pr-labels-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Copy labels from referenced issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            // Exclusive families, strictest value first. A repository label that
+            // starts with a family prefix but is missing here fails the run, so a
+            // new value cannot slip through and be applied alongside another.
+            const EXCLUSIVE = {
+              'priority: ': ['priority: critical', 'priority: high', 'priority: medium', 'priority: low'],
+              'scope: ': ['scope: large', 'scope: medium', 'scope: small'],
+            };
+
+            const repoLabels = new Set(
+              (await github.paginate(github.rest.issues.listLabelsForRepo, { owner, repo, per_page: 100 }))
+                .map((l) => l.name),
+            );
+            for (const [prefix, ranked] of Object.entries(EXCLUSIVE)) {
+              const unranked = [...repoLabels].filter((l) => l.startsWith(prefix) && !ranked.includes(l));
+              if (unranked.length > 0) {
+                core.setFailed(`Label(s) ${unranked.join(', ')} are not ranked in EXCLUSIVE in .github/workflows/pr-labels.yml.`);
+                return;
+              }
+            }
+
+            const body = context.payload.pull_request.body || '';
+            const ref = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|part\s+of)\s+#(\d+)\b/gi;
+            const issues = [...new Set([...body.matchAll(ref)].map((m) => parseInt(m[1], 10)))];
+            if (issues.length === 0) {
+              core.info('The PR body references no issues; nothing to copy.');
+              return;
+            }
+            core.info(`Referenced: ${issues.map((n) => `#${n}`).join(', ')}`);
+
+            const inherited = new Set();
+            for (const issue_number of issues) {
+              let issue;
+              try {
+                ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number }));
+              } catch (err) {
+                core.warning(`Could not read #${issue_number}: ${err.message}`);
+                continue;
+              }
+              if (issue.pull_request) continue; // a PR number, not an issue
+              for (const { name } of issue.labels) {
+                if (repoLabels.has(name)) inherited.add(name);
+              }
+            }
+
+            // Current labels from the API: the event payload can be stale.
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const current = new Set(pr.labels.map((l) => l.name));
+
+            const remove = [];
+            for (const ranked of Object.values(EXCLUSIVE)) {
+              const onPR = ranked.filter((l) => current.has(l));
+              const fromIssues = ranked.filter((l) => inherited.has(l));
+              // Drop every inherited member, then re-add at most the one winner.
+              for (const l of fromIssues) inherited.delete(l);
+              if (onPR.length > 0) {
+                // The PR already decided this family; only repair a conflict on it.
+                remove.push(...onPR.slice(1));
+              } else if (fromIssues.length > 0) {
+                inherited.add(fromIssues[0]);
+              }
+            }
+
+            for (const name of remove) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: prNumber, name });
+                core.info(`Removed conflicting label: ${name}`);
+              } catch (err) {
+                if (err.status !== 404) core.warning(`Could not remove ${name}: ${err.message}`);
+              }
+            }
+
+            const add = [...inherited].filter((l) => !current.has(l));
+            if (add.length === 0) {
+              core.info('No labels to add.');
+              return;
+            }
+            await github.rest.issues.addLabels({ owner, repo, issue_number: prNumber, labels: add });
+            core.info(`Added: ${add.join(', ')}`);
