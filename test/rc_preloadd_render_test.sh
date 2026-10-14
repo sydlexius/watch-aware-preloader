@@ -196,6 +196,10 @@ for t in resume next_up recently_added; do
     awk -v h="[tiers.$t]" '$0==h{f=1;next} f&&/^enabled = /{print;exit}'   "$cfg" | grep -q 'enabled = true' || fail "tier $t enabled default not true"
     awk -v h="[tiers.$t]" '$0==h{f=1;next} f&&/^max_items = /{print;exit}' "$cfg" | grep -q 'max_items = 0'   || fail "tier $t max_items default not 0"
 done
+# Binge look-ahead is the exception: OFF by default (#139), and absent from the
+# derived order, so an upgrade never changes a household's preload set.
+awk '$0=="[tiers.binge_ahead]"{f=1;next} f&&/^enabled = /{print;exit}' "$cfg" | grep -q 'enabled = false' || fail "binge_ahead enabled default not false"
+assert_contains "$cfg" 'order = ["resume", "nextup", "recent"]'
 
 # --- tiers: explicit values incl. a disabled tier and a cap ---
 { printf 'TIER_RESUME_ENABLED="1"\nTIER_RESUME_MAX="15"\n'; \
@@ -241,6 +245,19 @@ CFG
 rm -f "$cfg"
 bash "$RC" render
 assert_contains "$cfg" 'order = ["nextup", "resume"]'
+
+# Binge look-ahead joins the order only when named, and keeps its own cap.
+cat > "$WAP_FLASH/watch-aware-preloader.cfg" <<'CFG'
+SERVER_TYPE="emby"
+SERVER_URL="http://media.example:8096"
+TIER_ORDER="resume,binge"
+TIER_BINGE_ENABLED="1"
+TIER_BINGE_MAX="3"
+CFG
+rm -f "$cfg"
+bash "$RC" render
+assert_contains "$cfg" 'order = ["resume", "binge"]'
+awk '$0=="[tiers.binge_ahead]"{f=1;next} f&&/^max_items = /{print;exit}' "$cfg" | grep -q 'max_items = 3' || fail "binge_ahead max not 3"
 
 # A per-user override emits into [tiers.override]; users without one emit
 # NOTHING (inheritance is by absence: emitting a copy of the global order would

@@ -189,6 +189,28 @@ $post = [
 wap_sanitize_settings_post($post);
 check($post['TIER_ORDER'] === 'recent,resume', 'reconciliation preserves the posted order');
 
+// Binge look-ahead (#139) is a known token, and its tickbox and cap are
+// reconciled and clamped like the other tiers'.
+check(wap_cfg_tier_order('binge,resume,binge') === 'binge,resume', 'binge is a known tier token');
+$post = [
+    'TIER_ORDER'          => 'resume',
+    'TIER_RESUME_ENABLED' => '1',
+    'TIER_BINGE_ENABLED'  => 'on',
+    'TIER_BINGE_MAX'      => '99999',
+];
+wap_sanitize_settings_post($post);
+check($post['TIER_ORDER'] === 'resume,binge', 'a ticked binge box is appended to the order');
+check($post['TIER_BINGE_ENABLED'] === '1' && $post['TIER_BINGE_MAX'] === '10000', 'binge dial normalized and clamped');
+$post = ['TIER_ORDER' => 'resume,binge', 'TIER_RESUME_ENABLED' => '1', 'TIER_BINGE_MAX' => '0'];
+wap_sanitize_settings_post($post);
+check($post['TIER_ORDER'] === 'resume', 'an unticked binge box is dropped from the order');
+
+// A pre-feature .cfg (no TIER_ORDER) derives its order from the legacy flags;
+// binge look-ahead defaults OFF there while the original three default on.
+check(wap_cfg_legacy_order([]) === ['resume', 'nextup', 'recent'], 'old cfg without TIER_ORDER leaves binge off');
+check(wap_cfg_legacy_order(['TIER_NEXTUP_ENABLED' => '0']) === ['resume', 'recent'], 'legacy flags still disable an original tier');
+check(wap_cfg_legacy_order(['TIER_BINGE_ENABLED' => '1']) === ['resume', 'nextup', 'recent', 'binge'], 'a legacy binge flag appends binge');
+
 // A POST that never rendered the tier section must NOT be read as "all tiers off"
 // - an unchecked box posts nothing, so that would wipe the saved order.
 $post = ['TIER_ORDER' => 'resume,nextup'];

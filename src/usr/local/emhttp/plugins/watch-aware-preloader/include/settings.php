@@ -95,14 +95,14 @@ function wap_cfg_clamp_int(mixed $v, int $min, int $max, int $default): int
 /**
  * Normalize a tier-order field to a CSV of known tier names, in the posted order.
  * Unknown names and duplicates are dropped. Valid cfg spellings are exactly
- * resume, nextup and recent. An empty result is LEGAL and means "warm nothing":
- * it must not be back-filled with the default order.
+ * resume, nextup, recent and binge. An empty result is LEGAL and means "warm
+ * nothing": it must not be back-filled with the default order.
  *
  * @param mixed $v a CSV string or a list of tier names
  */
 function wap_cfg_tier_order(mixed $v): string
 {
-    $known = ['resume', 'nextup', 'recent'];
+    $known = ['resume', 'nextup', 'recent', 'binge'];
     $items = \is_array($v) ? $v : explode(',', (string) (\is_scalar($v) ? $v : ''));
     $out   = [];
     foreach ($items as $item) {
@@ -116,6 +116,29 @@ function wap_cfg_tier_order(mixed $v): string
     }
 
     return implode(',', $out);
+}
+
+/**
+ * The tier order a pre-feature .cfg (no TIER_ORDER key) implies, from its legacy
+ * TIER_<K>_ENABLED flags, mirroring rc.preloadd's legacy_order_from_flags. An
+ * absent flag takes the tier's default: on for the original three, OFF for
+ * binge look-ahead (#139), so a .cfg that predates the tier never gains it.
+ *
+ * @param array<string, mixed> $cfg the parsed .cfg
+ * @return list<string>
+ */
+function wap_cfg_legacy_order(array $cfg): array
+{
+    $defaults = ['resume' => ['RESUME', '1'], 'nextup' => ['NEXTUP', '1'], 'recent' => ['RECENT', '1'], 'binge' => ['BINGE', '0']];
+    $out      = [];
+    foreach ($defaults as $tok => [$pfx, $def]) {
+        $v = $cfg["TIER_{$pfx}_ENABLED"] ?? $def;
+        if (\in_array(strtolower((string) (\is_scalar($v) ? $v : '')), ['1', 'true', 'yes', 'on'], true)) {
+            $out[] = $tok;
+        }
+    }
+
+    return $out;
 }
 
 /**
@@ -145,7 +168,7 @@ function wap_cfg_tier_order(mixed $v): string
 function wap_cfg_reconcile_order(string $csv, array $post): string
 {
     // token => the cfg-prefix naming its legacy tickbox.
-    $boxes = ['resume' => 'RESUME', 'nextup' => 'NEXTUP', 'recent' => 'RECENT'];
+    $boxes = ['resume' => 'RESUME', 'nextup' => 'NEXTUP', 'recent' => 'RECENT', 'binge' => 'BINGE'];
 
     $sectionPosted = false;
     foreach ($boxes as $pfx) {
@@ -269,7 +292,7 @@ function wap_sanitize_settings_post(array &$post): void
     $post['TARGET_SECONDS'] = (string) wap_cfg_clamp_int($post['TARGET_SECONDS'] ?? null, 1, 86400, 20);
     $post['CRON_INTERVAL']  = (string) wap_cfg_clamp_int($post['CRON_INTERVAL'] ?? null, 1, 59, 15);
 
-    foreach (['RESUME', 'NEXTUP', 'RECENT'] as $t) {
+    foreach (['RESUME', 'NEXTUP', 'RECENT', 'BINGE'] as $t) {
         $post["TIER_{$t}_ENABLED"] = wap_cfg_checkbox($post["TIER_{$t}_ENABLED"] ?? null);
         $post["TIER_{$t}_MAX"]     = (string) wap_cfg_clamp_int($post["TIER_{$t}_MAX"] ?? null, 0, 10000, 0);
     }

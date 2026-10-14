@@ -155,6 +155,21 @@ test('unticking a user repaints from the live form, not the saved estimate', asy
     assert.match(textOf(w), /2\.0 GiB projected/, 'the meter follows the unticked selection');
 });
 
+test('ticking the binge look-ahead box adds its rows to the meter', async () => {
+    // BINGE must map to the estimate's 'binge-ahead' token; a wrong key leaves
+    // the box inert and the meter never moves.
+    const w = await load(build(
+        { budget_bytes: 10 * GIB, rows: [row('resume', 2 * GIB), row('binge-ahead', 3 * GIB)] },
+        { tiers: { RESUME: true, NEXTUP: true, RECENT: true, BINGE: false } },
+    ));
+    assert.match(textOf(w), /2\.0 GiB projected/, 'an unticked binge tier contributes nothing');
+
+    const binge = w.document.querySelector('input[name="TIER_BINGE_ENABLED"]');
+    binge.checked = true;
+    binge.dispatchEvent(new w.Event('change'));
+    assert.match(textOf(w), /5\.0 GiB projected/, 'ticking binge adds its rows');
+});
+
 test('with no USERS[] checkboxes the selection falls back to the scalar CSV', async () => {
     // The connect-gate branch renders no per-user checkboxes and re-posts the
     // saved selection as a hidden scalar; the meter must still scope to it.

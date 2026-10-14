@@ -186,7 +186,7 @@ tier_csv_filter() {
     for item in "${items[@]}"; do
         item="$(trim "$item")"
         case "$item" in
-            resume | nextup | recent) ;;
+            resume | nextup | recent | binge) ;;
             *) continue ;;
         esac
         case ",$seen," in
@@ -214,6 +214,11 @@ legacy_order_from_flags() {
     if [ "$(cfg_bool "$(cfg_get "$src" TIER_RECENT_ENABLED 1)")" = "true" ]; then
         if [ -n "$out" ]; then out="$out,"; fi
         out="${out}recent"
+    fi
+    # Binge look-ahead defaults OFF (#139): a .cfg without the flag never gains it.
+    if [ "$(cfg_bool "$(cfg_get "$src" TIER_BINGE_ENABLED 0)")" = "true" ]; then
+        if [ -n "$out" ]; then out="$out,"; fi
+        out="${out}binge"
     fi
     printf '%s' "$out"
 }
@@ -395,13 +400,15 @@ render() {
     maps="$(cfg_get "$src" PATH_MAPS "")"
     interval="$(cfg_get "$src" CRON_INTERVAL 15)"
 
-    local tr_en tr_max tn_en tn_max tc_en tc_max
+    local tr_en tr_max tn_en tn_max tc_en tc_max tb_en tb_max
     tr_en="$(cfg_bool "$(cfg_get "$src" TIER_RESUME_ENABLED 1)")"
     tr_max="$(num_or "$(cfg_get "$src" TIER_RESUME_MAX 0)" 0)"
     tn_en="$(cfg_bool "$(cfg_get "$src" TIER_NEXTUP_ENABLED 1)")"
     tn_max="$(num_or "$(cfg_get "$src" TIER_NEXTUP_MAX 0)" 0)"
     tc_en="$(cfg_bool "$(cfg_get "$src" TIER_RECENT_ENABLED 1)")"
     tc_max="$(num_or "$(cfg_get "$src" TIER_RECENT_MAX 0)" 0)"
+    tb_en="$(cfg_bool "$(cfg_get "$src" TIER_BINGE_ENABLED 0)")"
+    tb_max="$(num_or "$(cfg_get "$src" TIER_BINGE_MAX 0)" 0)"
 
     # An ABSENT TIER_ORDER means a pre-feature .cfg: derive the order from the
     # legacy flags so behavior is unchanged. An EMPTY TIER_ORDER is an explicit
@@ -462,6 +469,10 @@ max_items = ${tn_max}
 [tiers.recently_added]
 enabled = ${tc_en}
 max_items = ${tc_max}
+
+[tiers.binge_ahead]
+enabled = ${tb_en}
+max_items = ${tb_max}
 
 ${overrides_toml}
 [preload]
