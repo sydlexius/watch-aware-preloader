@@ -16,7 +16,7 @@ knowing before you go looking for a supervision loop that is not the main path.
 
 | Tool | Version | Why |
 |---|---|---|
-| Go | 1.27+ | builds the `preloadd` binary |
+| Go | 1.27.2+ | builds the `preloadd` binary |
 | make | any | task runner |
 | golangci-lint | v2 | Go static analysis |
 | PHP CLI | 8.1+ (8.3.0 pinned) | runs the PHP linters |

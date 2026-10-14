@@ -39,7 +39,7 @@ over a supervised service to avoid init-script/restart/update complexity.
   "hack", "sucks"); prefer "workaround", "defect", "does not work". When quoting
   maintainer feedback into an issue or PR, paraphrase the slang out. This is a
   public repo; keep the record clean.
-- **Go 1.26+**, `net/http` stdlib (no third-party router), `log/slog` for logging.
+- **Go 1.27+**, `net/http` stdlib (no third-party router), `log/slog` for logging.
 - Single static binary `preloadd` - no CGO, no runtime deps on the Unraid host.
 - Internally decoupled units, each independently testable (see Architecture).
 - **PHP** (Phase 2 settings page only): PSR-12, kept under `plugin/`. Lint with
