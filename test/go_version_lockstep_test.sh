@@ -23,19 +23,22 @@ minor="1.${BASH_REMATCH[1]}"
 # awk on fields tolerates indentation and a trailing // comment, both of which
 # the go command accepts in go.mod.
 gomod="$(awk '$1 == "go" { print $2; exit }' "${REPO_ROOT}/go.mod")"
+[[ -n "$gomod" ]] || fail "go.mod has no 'go' directive"
 [[ "$gomod" == "${minor}."* ]] || fail "go.mod 'go ${gomod}' is not on the ${minor} line from .github/go-version"
 if awk '$1 == "toolchain" { found = 1 } END { exit !found }' "${REPO_ROOT}/go.mod"; then
     fail "go.mod has a toolchain directive; it would pin an exact patch and defeat .github/go-version"
 fi
 
 tv="$(awk '$1 == "golang" { print $2; exit }' "${REPO_ROOT}/.tool-versions")"
+[[ -n "$tv" ]] || fail ".tool-versions has no 'golang' entry"
 [[ "$tv" == "${minor}."* ]] || fail ".tool-versions 'golang ${tv}' is not on the ${minor} line"
 
 # Every setup-go reference anywhere under .github (workflows in .yml or .yaml,
 # composite actions) must read .github/go-version, float with check-latest, and
-# carry no inline go-version. Each step's block runs from its setup-go line to
-# the next list item at the same or a shallower indent, with comments stripped
-# so a commented-out key cannot satisfy the check.
+# carry no inline go-version. Each step's block is the WHOLE step - from its
+# owning "- " line to the next list item at the same or a shallower indent, so
+# keys written above uses: count too - with comments stripped so a
+# commented-out key cannot satisfy the check.
 steps="$(python3 - <<'PY'
 import os, re, sys
 root = os.environ["REPO_ROOT"]
@@ -51,13 +54,29 @@ for dirpath, _, files in os.walk(os.path.join(root, ".github")):
             if "actions/setup-go@" not in line or line.lstrip().startswith("#"):
                 continue
             steps += 1
-            # Indent of the list item that owns this uses: line.
-            j = i
-            while j > 0 and not re.match(r"^\s*-\s", lines[j]):
-                j -= 1
-            dash = len(lines[j]) - len(lines[j].lstrip())
-            block = []
-            for k in range(i + 1, len(lines)):
+            # The owning step is the nearest list item indented LESS than the
+            # uses: key (or this line itself, for the "- uses:" form). Stopping
+            # at the first "- " found would pick up a list nested in an earlier
+            # step's with: block and mis-size this step's block.
+            own = re.match(r"^(\s*)-\s", line)
+            start = i
+            if own:
+                dash = len(own.group(1))
+            else:
+                key = len(line) - len(line.lstrip())
+                dash = None
+                for j in range(i - 1, -1, -1):
+                    m = re.match(r"^(\s*)-\s", lines[j])
+                    if m and len(m.group(1)) < key:
+                        dash, start = len(m.group(1)), j
+                        break
+                if dash is None:
+                    print(f"FAIL: {rel}:{i + 1} setup-go is not inside a steps list item", file=sys.stderr)
+                    errors += 1
+                    continue
+            # The owning line's own key ("- with:" etc.) counts, minus its dash.
+            block = [re.sub(r"(^|\s)#.*$", "", lines[start][dash + 1:]).rstrip()]
+            for k in range(start + 1, len(lines)):
                 m = re.match(r"^(\s*)-\s", lines[k])
                 if m and len(m.group(1)) <= dash:
                     break
