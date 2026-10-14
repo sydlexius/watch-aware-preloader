@@ -2,11 +2,14 @@
 
 Notable changes to Watch-Aware Preloader, newest first.
 
-**GitHub Releases are the notes of record.** Each release page carries the full
-notes, the install/update link, and the compare link to the previous release:
-<https://github.com/sydlexius/watch-aware-preloader/releases>. This file is a
-short index of those releases, a few lines each, so the history is readable
-from a clone. When the two disagree, the release page wins.
+**GitHub Releases are the notes of record** where a release page carries full
+notes: <https://github.com/sydlexius/watch-aware-preloader/releases>. Eleven
+earlier pages (`2026.06.30.2` through `2026.08.05.2`) still show only the
+automated one-line placeholder; their entries below come from the annotated tag
+message, which is what shipped in the `.plg` changelog, plus `git log` for the
+PR and issue numbers. This file is a short index, a few lines per release, so
+the history is readable from a clone. Where a release page has full notes and
+the two disagree, the release page wins.
 
 ## Versioning
 

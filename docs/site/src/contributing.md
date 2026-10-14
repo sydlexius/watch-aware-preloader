@@ -186,8 +186,12 @@ which:
    cannot be added afterwards.
 
 A published release is immutable. If the workflow fails after the tag push,
-delete the leftover draft release and the tag (locally and on the remote)
-before tagging again, rather than trying to repair the release in place.
+check the release state before deleting anything
+(`gh release view <tag> --json isDraft`), because the publish step can succeed
+on GitHub even when the workflow reports an error. Only if the release is still
+a draft, delete it and the tag (locally and on the remote) and tag again. If it
+is already published, keep the tag and do not retry; fix the problem in a new
+release instead.
 
 Every release is published as the latest release, never as a prerelease (the
 four `2026.06.30.x` builds were prereleases under an earlier version of the
@@ -195,7 +199,8 @@ workflow). Installed copies check
 `releases/latest/download/watch-aware-preloader.plg` for updates, and GitHub
 leaves prereleases out of `releases/latest`.
 
-The workflow writes a one-line placeholder as the release notes. Those notes are
-then replaced by hand with the full notes on the release page, which is the
-record of what each release contains. `CHANGELOG.md` at the repository root is a
+The workflow writes a one-line placeholder as the release notes. Replace it by
+hand with the full notes on the release page, which is then the record of what
+the release contains; nothing enforces this step, and several older releases
+still show only the placeholder. `CHANGELOG.md` at the repository root is a
 short index that points back to those pages.
