@@ -137,8 +137,10 @@ jobs:
         run: bash test/rc_preloadd_estimate_test.sh
       - name: .plg render CDATA safety test (#23)
         run: bash test/plg_render_test.sh
-      - name: Community Applications wrapper test (#4)
+      - name: CA wrapper cross-repo check (unraid-templates wrapper vs plugin.j2, #145)
         run: bash test/ca_wrapper_test.sh
+      - name: CA wrapper check fixture tests (offline, #145)
+        run: bash test/ca_wrapper_fixture_test.sh
       - name: Go toolchain lockstep test (.github/go-version vs go.mod vs workflows)
         run: bash test/go_version_lockstep_test.sh
       - name: JS unit tests (test/*_test.js)
