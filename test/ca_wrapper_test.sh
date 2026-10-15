@@ -1,113 +1,137 @@
 #!/bin/bash
-# Guards the Community Applications submission artifacts (ca_profile.xml and
-# plugins/watch-aware-preloader.xml) against the failure modes that are only
-# observable AFTER a submission is rejected, which is a slow and manual loop:
-# CA plugin submissions are reviewed by a human, so a defect here costs a
-# round trip with a moderator rather than a red check.
+# Cross-repo guard for the Community Applications (CA) plugin wrapper.
+#
+# The CA wrapper (plugins/watch-aware-preloader.xml) and the CA profile no longer
+# live in this repo: they are aggregated with this account's other CA listings in
+# sydlexius/unraid-templates (#145). This test fetches that wrapper from
+# unraid-templates `main` and checks it against plugin/plugin.j2 here.
+#
+# Two halves, one invariant:
+#   - PREVENTIVE (this test): runs in CI and the pre-push gate, so a change to
+#     plugin/plugin.j2 that would break the wrapper pairing fails on the PR,
+#     BEFORE a release publishes a .plg the listing no longer matches.
+#   - DETECTIVE (unraid-templates' daily check): compares the wrapper against the
+#     PUBLISHED .plg and catches drift that lands from either side.
 #
 # The load-bearing assertion is PluginURL: CA matches the wrapper's <PluginURL>
-# against the .plg's own pluginURL attribute EXACTLY, and that pairing is the
-# plugin's identity key. A drift between plugin/plugin.j2 and the wrapper is
-# invisible to every other gate in this repo, so it is asserted here rather than
-# left to review.
+# against the .plg's own pluginURL attribute BYTE-FOR-BYTE, and that pairing is
+# the plugin's identity key. Surrounding whitespace in the wrapper is therefore a
+# mismatch, not something to strip.
 #
 # Fields the .plg overrides (support, min, max, icon) are checked for AGREEMENT
-# rather than presence: the wrapper declaring something different from the .plg
-# is not a hard failure in CA, but it is a documentation lie, and this repo has
-# been bitten before by comments and docs claiming more than the code delivers.
+# rather than presence: a disagreement is not a hard failure in CA, but it means
+# one surface describes a plugin that does not exist.
+#
+# Inputs (overrides exist so test/ca_wrapper_fixture_test.sh can run offline):
+#   CA_WRAPPER_SRC  local wrapper file to check instead of fetching
+#   CA_WRAPPER_URL  wrapper URL to fetch (https only); default is unraid-templates main
+#   CA_TEMPLATE     plugin template to compare against; default plugin/plugin.j2
+#   CA_WRAPPER_RETRIES  curl retry count (non-negative integer); default 3. The
+#                   fixture suite sets 0 so its unreachable-URL case stays fast.
+# A fetch failure FAILS: an unreachable wrapper is never a silent pass.
+#
+# ORDERING for a change that must touch BOTH plugin/plugin.j2 and the wrapper in
+# sydlexius/unraid-templates (e.g. a min= bump):
+#   1. Merge the wrapper change in sydlexius/unraid-templates FIRST. Its daily
+#      drift check stays red until the next release here; that check is not a
+#      required check there, so it does not block the merge.
+#   2. This repo's PR then goes green (this test reads unraid-templates main);
+#      merge it.
+#   3. Release.
+# Conversely, ANY wrapper edit in unraid-templates turns open PRs here red until
+# plugin.j2 agrees with it. That is the intended preventive effect, not a flake.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROFILE="${REPO_ROOT}/ca_profile.xml"
-WRAPPER="${REPO_ROOT}/plugins/watch-aware-preloader.xml"
-TMPL="${REPO_ROOT}/plugin/plugin.j2"
+DEFAULT_URL="https://raw.githubusercontent.com/sydlexius/unraid-templates/main/plugins/watch-aware-preloader.xml"
+URL="${CA_WRAPPER_URL:-$DEFAULT_URL}"
+RETRIES="${CA_WRAPPER_RETRIES:-3}"
+TMPL="${CA_TEMPLATE:-${REPO_ROOT}/plugin/plugin.j2}"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-for f in "$PROFILE" "$WRAPPER" "$TMPL"; do
-    [ -f "$f" ] || fail "missing required file: $f"
-done
+[ -f "$TMPL" ] || fail "missing plugin template: $TMPL"
 
-# 1. Both CA files must be well-formed XML. python3 is already a hard dependency
-#    of this repo's gates; xmllint is not present on every runner.
-for f in "$PROFILE" "$WRAPPER"; do
-    python3 -c "import sys,xml.etree.ElementTree as ET; ET.parse(sys.argv[1])" "$f" \
-        || fail "not well-formed XML: $f"
-done
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+WRAPPER="${WORK}/wrapper.xml"
 
-# 2. The profile's root element and a NON-EMPTY <Profile>. An empty Profile
-#    blocks CA submission from finalizing, and the root element is
-#    <CommunityApplications> per the official starter - NOT the <RepositoryInfo>
-#    spelling used by this author's older Docker templates repo.
-python3 - "$PROFILE" <<'PY' || exit 1
-import sys, xml.etree.ElementTree as ET
-root = ET.parse(sys.argv[1]).getroot()
-if root.tag != "CommunityApplications":
-    sys.exit(f"FAIL: ca_profile.xml root is <{root.tag}>, want <CommunityApplications>")
-prof = root.findtext("Profile") or ""
-if not prof.strip():
-    sys.exit("FAIL: ca_profile.xml <Profile> is empty; CA blocks submission on this")
-PY
+if [ -n "${CA_WRAPPER_SRC:-}" ]; then
+    [ -f "$CA_WRAPPER_SRC" ] || fail "CA_WRAPPER_SRC does not exist: $CA_WRAPPER_SRC"
+    cp "$CA_WRAPPER_SRC" "$WRAPPER"
+    SRC_DESC="$CA_WRAPPER_SRC"
+else
+    case "$URL" in
+        https://*) ;;
+        *) fail "refusing non-https wrapper URL: $URL" ;;
+    esac
+    case "$RETRIES" in
+        ''|*[!0-9]*) fail "CA_WRAPPER_RETRIES must be a non-negative integer: $RETRIES" ;;
+    esac
+    # --retry-all-errors: DNS failures and refused connections retry too, not
+    # only the HTTP/timeout errors curl treats as transient by default.
+    curl -fsSL --proto '=https' --retry "$RETRIES" --retry-all-errors --max-time 30 \
+        -o "$WRAPPER" "$URL" \
+        || fail "could not fetch the CA wrapper from $URL (fail closed: the cross-repo check did not run)"
+    SRC_DESC="$URL"
+fi
+[ -s "$WRAPPER" ] || fail "CA wrapper is empty: $SRC_DESC"
 
-# 3. Required wrapper fields, and agreement with the .plg on every field the
-#    .plg overrides.
-python3 - "$WRAPPER" "$TMPL" <<'PY' || exit 1
+python3 - "$WRAPPER" "$TMPL" "$SRC_DESC" <<'PY' || exit 1
 import re, sys, xml.etree.ElementTree as ET
 
-wrapper, tmpl = sys.argv[1], sys.argv[2]
-root = ET.parse(wrapper).getroot()
+wrapper, tmpl, desc = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    root = ET.parse(wrapper).getroot()
+except ET.ParseError as e:
+    sys.exit(f"FAIL: wrapper is not well-formed XML ({desc}): {e}")
 if root.tag != "Plugin":
     sys.exit(f"FAIL: wrapper root is <{root.tag}>, want <Plugin>")
 
 # Two tiers, kept distinct because they fail differently. CA REQUIRES the first
-# set (the starter's own "Required fields" block is exactly these four, above its
-# "Optional entries" marker), so a submission missing one is rejected.
-# PluginAuthor belongs here and was missed in the first version of this gate:
-# 300 of the 311 listed plugins carry it.
+# set (the starter's "Required fields" block), so a listing missing one is
+# rejected.
 for field in ("Name", "Overview", "PluginURL", "PluginAuthor"):
     if not (root.findtext(field) or "").strip():
         sys.exit(f"FAIL: wrapper is missing a non-empty <{field}> (required by CA)")
 
-# CA treats these as optional, but this repo always ships them: a listing without
-# a support link, a project link, or a category is worse for a user reading the
-# catalog, and dropping one silently is the kind of regression a gate should
-# catch. Asserted separately so the failure message does not claim CA rejects it.
+# CA treats these as optional, but the listing always ships them; asserted
+# separately so the message does not claim CA rejects their absence.
 for field in ("Support", "Project", "Category"):
     if not (root.findtext(field) or "").strip():
         sys.exit(f"FAIL: wrapper is missing a non-empty <{field}> (repo convention)")
 
 raw = open(tmpl, encoding="utf-8").read()
 
-# STRIP XML COMMENTS FIRST. plugin.j2 documents its own attributes in comments -
-# the icon= rationale block quotes icon="hdd-o" twelve lines above the real
-# attribute - so a naive search matches the PROSE and compares the wrapper
-# against a sentence. Found by review: mutating the real icon= to "bolt" left
-# this test passing, and the other three attributes agreed only by luck of
-# ordering.
+# STRIP XML COMMENTS FIRST. plugin.j2 documents its own attributes in comments
+# (the icon= rationale quotes icon="hdd-o" above the real attribute), so a naive
+# search would compare the wrapper against prose.
 src = re.sub(r"<!--.*?-->", "", raw, flags=re.S)
 
 def attr(name):
-    # Anchor on the PLUGIN element's attribute lines (leading whitespace then
-    # name=), not a bare word boundary, so a substring like pluginURL= cannot
-    # satisfy a search for a shorter name.
+    # Anchor on attribute lines (leading whitespace then name=), so a substring
+    # like pluginURL= cannot satisfy a search for a shorter name.
     matches = re.findall(rf'^\s*{name}="([^"]*)"', src, flags=re.M)
     if not matches:
-        sys.exit(f"FAIL: plugin.j2 has no {name}= attribute to compare against")
+        sys.exit(f"FAIL: plugin template has no {name}= attribute to compare against")
     if len(set(matches)) > 1:
-        sys.exit(f"FAIL: plugin.j2 has conflicting {name}= values: {sorted(set(matches))}")
+        sys.exit(f"FAIL: plugin template has conflicting {name}= values: {sorted(set(matches))}")
     return matches[0]
 
-# THE hard one: CA keys the plugin's identity on this pair matching exactly.
-plg_url, wrap_url = attr("pluginURL"), root.findtext("PluginURL").strip()
+# THE hard one. Deliberately NOT stripped: CA compares byte-for-byte.
+plg_url, wrap_url = attr("pluginURL"), root.findtext("PluginURL")
 if plg_url != wrap_url:
     sys.exit(
         "FAIL: <PluginURL> does not match plugin.j2's pluginURL exactly.\n"
-        f"  plugin.j2: {plg_url}\n"
-        f"  wrapper:   {wrap_url}\n"
-        "  CA matches these byte-for-byte; a mismatch fails the submission."
+        f"  plugin.j2: {plg_url!r}\n"
+        f"  wrapper:   {wrap_url!r}\n"
+        "  CA matches these byte-for-byte (surrounding whitespace included);\n"
+        "  fix plugin.j2 or the wrapper in sydlexius/unraid-templates."
     )
 
-# The .plg overrides these, so a difference is a silent documentation lie.
+def strip_fa(v):
+    return v[3:] if v.startswith("fa-") else v
+
 for plg_attr, wrap_field in (
     ("support", "Support"),
     ("min", "MinVer"),
@@ -117,17 +141,13 @@ for plg_attr, wrap_field in (
     wrap_val = (root.findtext(wrap_field) or "").strip()
     if not wrap_val:
         continue
-    # An attribute the .plg does not carry cannot conflict with the wrapper, and
-    # for min/max the wrapper value is then the one CA uses. max= is genuinely
-    # absent here, which is why this is a skip rather than a failure.
-    m = re.findall(rf'^\s*{plg_attr}="([^"]*)"', src, flags=re.M)
-    if not m:
+    # An attribute the template does not carry cannot conflict (max= is
+    # genuinely absent today), so either side lacking it is a skip.
+    if not re.findall(rf'^\s*{plg_attr}="([^"]*)"', src, flags=re.M):
         continue
     plg_val = attr(plg_attr)
-    # support= is allowed to be the repo root while the wrapper names /issues:
-    # the .plg wins either way, and /issues is the convention CA listings use.
-    # Compare on PATH BOUNDARIES, not a raw prefix - "…/issues.evil.example/x"
-    # startswith "…/issues" and would otherwise pass.
+    # support= may be the repo root while the wrapper names /issues. Compare on
+    # PATH BOUNDARIES: ".../issues.evil.example/x" startswith ".../issues".
     if plg_attr == "support":
         base = plg_val.rstrip("/")
         if wrap_val != base and not wrap_val.startswith(base + "/"):
@@ -136,14 +156,21 @@ for plg_attr, wrap_field in (
                 "nor a path beneath it"
             )
         continue
+    # The wrapper's IconFA is conventionally spelled without the fa- prefix
+    # (CA publishes it as-is); the .plg may carry either form.
+    if plg_attr == "icon":
+        if strip_fa(plg_val) != strip_fa(wrap_val):
+            sys.exit(
+                f"FAIL: <IconFA> is {wrap_val} but plugin.j2 icon= is {plg_val} "
+                "(compared modulo a leading fa-)"
+            )
+        continue
     if plg_val != wrap_val:
         sys.exit(
             f"FAIL: <{wrap_field}> is {wrap_val} but plugin.j2 {plg_attr}= is {plg_val}.\n"
-            "  Which surface wins varies by field (the .plg overrides support/min/max;\n"
-            "  the wrapper's IconFA is what CA publishes), so the only safe state is\n"
-            "  agreement: a disagreement means one of them describes a plugin that\n"
-            "  does not exist."
+            "  The only safe state is agreement: a disagreement means one of them\n"
+            "  describes a plugin that does not exist."
         )
 PY
 
-echo "PASS: CA wrapper and profile"
+echo "PASS: CA wrapper ($SRC_DESC) agrees with $(basename "$TMPL")"
