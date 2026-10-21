@@ -12,7 +12,7 @@ pinned language versions live in [`.tool-versions`](.tool-versions) - run
 
 | Tool | Version | Why | Declared in |
 |------|---------|-----|-------------|
-| Go | 1.27.2+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions`, `.github/go-version` |
+| Go | 1.27.3+ | builds the `preloadd` daemon | `go.mod`, `.tool-versions`, `.github/go-version` |
 | make | any | task runner | - |
 
 CI and release builds read `.github/go-version` (`1.27.x`) with `check-latest: true`,
