@@ -13,4 +13,4 @@
 # substitute a different artifact under the same version string (OpenSSF
 # Scorecard PinnedDependenciesID).
 properdocs==1.6.7
-mkdocs-material==9.7.7
+mkdocs-material==9.8.0
