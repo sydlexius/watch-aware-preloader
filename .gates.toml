@@ -1,0 +1,8 @@
+# Gate definition for gate-runner.py (cc-orchestrator /prep-pr). Same command the
+# fallback chain already ran; made explicit so the pool weight has a home.
+[prep_pr]
+gate = "bash scripts/pre-push-gate.sh"
+# Cost in the machine-wide gate pool (cc-orchestrator 0.107.0; inert until a
+# [pool] budget exists in ~/.claude/gate-queue/config.toml). Measured 2026-10-26
+# against budget 10 on a 10-core Mac: gate ~1.1 cores avg.
+weight = 1
